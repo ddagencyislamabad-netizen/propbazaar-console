@@ -1,4 +1,4 @@
-/* PropBazaar Command Centre console (CC-4): owner actions behind confirmation.
+/* PropBazaar Command Centre console (CC-5): owner actions behind confirmation; Health page shows the background checks.
    - No innerHTML anywhere: everything is built with textContent, so data can never become markup.
    - The only network calls are the sign-in/second-factor calls, seven whitelisted READ functions and four whitelisted ACTION functions
      (WRITE below). Actions run only from a confirm button the owner taps; viewing a page never writes anything.
@@ -11,7 +11,7 @@
 
   // ---------- allow-list: the console can ONLY make these calls ----------
   var RPC = ['cc_console_verify', 'cc_console_audit', 'cc_console_anchors', 'cc_console_stop',
-             'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_approvals'];
+             'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_approvals', 'cc_console_collectors'];
   var WRITE = ['cc_console_decide', 'cc_console_notification_set', 'cc_console_stop_engage', 'cc_console_stop_release'];
   var AUTH = [
     ['POST', /^\/auth\/v1\/token\?grant_type=(password|refresh_token)$/],
@@ -341,6 +341,24 @@
       }).catch(function (e) { failure(listBox, e); });
     }
     sel.addEventListener('change', load); load();
+  };
+
+  pages.health = function (el) {
+    var box = h('div');
+    el.appendChild(h('h1', { text: 'Health' })); el.appendChild(h('p', { class: 'muted', text: 'Background checks report here. "No recent report" means the check has gone quiet: treat it as unknown, not as fine.' })); el.appendChild(box);
+    var NAMES = { collectors: 'Background checks', uptime: 'Website check', backup: 'Backups' };
+    var LOOK = { ok: ['chip-ok', 'Healthy'], up: ['chip-ok', 'Healthy'], stale: ['chip-warn', 'No recent report'], down: ['chip-bad', 'Not answering'], fail: ['chip-bad', 'Failed'], error: ['chip-bad', 'Problem'], never: ['chip-low', 'Not set up yet'] };
+    loading(box);
+    rpc('cc_console_collectors').then(function (rows) {
+      clear(box);
+      rows.forEach(function (r) {
+        var look = LOOK[r.status] || ['chip-low', r.status];
+        box.appendChild(h('div', { class: 'item' },
+          h('div', { class: 'row between' }, h('strong', { text: NAMES[r.name] || r.name }), h('span', { class: 'chip ' + look[0], text: look[1] })),
+          h('div', null, short(r.detail || '', 120)),
+          h('div', { class: 'small muted', text: r.last_at ? 'Last report: ' + when(r.last_at) : 'No report yet' })));
+      });
+    }).catch(function (e) { failure(box, e); });
   };
 
   pages.stop = function (el) {
