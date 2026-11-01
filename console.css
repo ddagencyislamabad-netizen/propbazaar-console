@@ -48,3 +48,9 @@ input:focus,select:focus,button:focus-visible,a:focus-visible{outline:3px solid 
 .qr{display:block;margin:8px auto;width:180px;height:180px;background:#fff}
 .mt{margin-top:14px}.center{justify-content:center}
 [hidden]{display:none!important}
+
+.btn-sm{padding:8px 14px;min-height:40px;font-size:14px}
+.btn-ok{background:var(--ok)}
+.btn-danger{background:var(--bad)}
+.panel{margin-top:10px;padding:12px;border:2px solid var(--blue);border-radius:12px;background:#F3F6FF}
+.strong{font-weight:600;margin:0 0 6px}

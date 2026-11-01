@@ -1,7 +1,8 @@
-/* PropBazaar Command Centre console (CC-3): READ ONLY.
+/* PropBazaar Command Centre console (CC-4): owner actions behind confirmation.
    - No innerHTML anywhere: everything is built with textContent, so data can never become markup.
-   - The only network calls are the sign-in/second-factor calls and seven whitelisted read functions (see ALLOWED).
-   - Nothing here can write to the database. Buttons that change things arrive in CC-4. */
+   - The only network calls are the sign-in/second-factor calls, seven whitelisted READ functions and four whitelisted ACTION functions
+     (WRITE below). Actions run only from a confirm button the owner taps; viewing a page never writes anything.
+   - Every action is checked again in the database (owner + second factor) and recorded there; this page is only the front door. */
 (function () {
   'use strict';
   var C = window.PB_CONSOLE;
@@ -11,6 +12,7 @@
   // ---------- allow-list: the console can ONLY make these calls ----------
   var RPC = ['cc_console_verify', 'cc_console_audit', 'cc_console_anchors', 'cc_console_stop',
              'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_approvals'];
+  var WRITE = ['cc_console_decide', 'cc_console_notification_set', 'cc_console_stop_engage', 'cc_console_stop_release'];
   var AUTH = [
     ['POST', /^\/auth\/v1\/token\?grant_type=(password|refresh_token)$/],
     ['GET',  /^\/auth\/v1\/user$/],
@@ -20,7 +22,7 @@
   ];
   function allowed(method, path) {
     var m = /^\/rest\/v1\/rpc\/([a-z_]+)$/.exec(path);
-    if (m) return method === 'POST' && RPC.indexOf(m[1]) !== -1;
+    if (m) return method === 'POST' && (RPC.indexOf(m[1]) !== -1 || WRITE.indexOf(m[1]) !== -1);
     return AUTH.some(function (a) { return a[0] === method && a[1].test(path); });
   }
 
@@ -57,6 +59,7 @@
   }
   function rpc(name, args, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
+    if (WRITE.indexOf(name) !== -1 && !args) return Promise.reject(new Error('blocked: action without arguments'));
     return request('POST', '/rest/v1/rpc/' + name, args || {}, S.access).catch(function (e) {
       if ((e.status === 401 || /JWT expired/i.test(e.message)) && !retried) return refresh().then(function () { return rpc(name, args, true); });
       if (/MFA_REQUIRED/.test(e.message)) { signOut('Second factor needed. Please sign in again.'); }
@@ -107,7 +110,7 @@
     var err = h('p', { class: 'err', hidden: 'hidden' });
     var btn = h('button', { class: 'btn', type: 'submit', text: 'Sign in' });
     var form = h('form', { class: 'card login', novalidate: 'novalidate' },
-      h('h1', { text: 'Owner sign in' }), h('p', { class: 'muted small', text: 'Read-only console. A second-factor code is required after your password.' }),
+      h('h1', { text: 'Owner sign in' }), h('p', { class: 'muted small', text: 'Owner console. A second-factor code is required after your password.' }),
       h('label', { for: 'email', text: 'Email' }), email, h('label', { for: 'pw', text: 'Password' }), pw, err, h('div', { class: 'row mt' }, btn));
     form.addEventListener('submit', function (ev) {
       ev.preventDefault(); err.hidden = true;
@@ -235,14 +238,46 @@
     check(); loading(listBox); load();
   };
 
+  // ---------- confirmation panel (used by every action that matters) ----------
+  // opts: { text, label (confirm button), danger, reason: {label, min, max, optional}, typed (word to type), run(reason) -> promise }
+  function confirmPanel(host, opts) {
+    var old = host.querySelector('.panel'); if (old) { old.remove(); return; }       // tapping the same button again closes it
+    var inp = null, typed = null, msg = h('p', { class: 'err', hidden: 'hidden' });
+    var ok = h('button', { class: 'btn ' + (opts.danger ? 'btn-danger' : 'btn-ok'), type: 'button', text: opts.label, disabled: 'disabled' });
+    var no = h('button', { class: 'btn btn-light', type: 'button', text: 'Cancel' });
+    var panel = h('div', { class: 'panel' }, h('p', { class: 'strong', text: opts.text }));
+    if (opts.reason) { inp = h('input', { type: 'text', maxlength: String(opts.reason.max || 300), 'aria-label': opts.reason.label, placeholder: opts.reason.label }); panel.appendChild(h('label', { text: opts.reason.label })); panel.appendChild(inp); }
+    if (opts.typed) { typed = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'characters', 'aria-label': 'Type ' + opts.typed, placeholder: 'Type ' + opts.typed }); panel.appendChild(h('label', { text: 'Type ' + opts.typed + ' to confirm' })); panel.appendChild(typed); }
+    panel.appendChild(msg); panel.appendChild(h('div', { class: 'row mt' }, ok, no));
+    function valid() {
+      var okReason = !opts.reason || opts.reason.optional || (inp.value.trim().length >= (opts.reason.min || 1));
+      var okTyped = !opts.typed || typed.value.trim() === opts.typed;
+      ok.disabled = !(okReason && okTyped);
+    }
+    if (inp) inp.addEventListener('input', valid); if (typed) typed.addEventListener('input', valid); valid();
+    no.addEventListener('click', function () { panel.remove(); });
+    ok.addEventListener('click', function (ev) {
+      if (!ev.isTrusted || ok.disabled) return;          // only a real tap, only when the checks above pass
+      ok.disabled = true; no.disabled = true; msg.hidden = true;
+      var v = inp ? inp.value.trim() : '';
+      opts.run(v).catch(function (e) {
+        msg.textContent = 'Not done: ' + e.message; msg.hidden = false; no.disabled = false; ok.disabled = false;
+      });
+    });
+    host.appendChild(panel); if (inp) inp.focus();
+  }
+
   pages.inbox = function (el) {
     var counts = h('div', { class: 'counts' }), listBox = h('div');
     var sel = h('select', { 'aria-label': 'Show' }, h('option', { value: 'unread', text: 'Unread' }), h('option', { value: '', text: 'Everything' }));
     el.appendChild(h('h1', { text: 'Notifications' })); el.appendChild(counts);
     el.appendChild(h('div', { class: 'card' }, sel)); el.appendChild(listBox);
-    el.appendChild(h('p', { class: 'muted small', text: 'Read-only for now. Marking notifications as read comes in CC-4.' }));
+    function mark(id, status, btn) {
+      btn.disabled = true;
+      rpc('cc_console_notification_set', { p_id: id, p_status: status }).then(load).catch(function (e) { btn.disabled = false; say('Not done: ' + e.message); });
+    }
     function load() {
-      loading(listBox);
+      loading(listBox); say('');
       rpc('cc_console_inbox_counts').then(function (c) {
         clear(counts); if (!c.length) counts.appendChild(h('span', { class: 'chip chip-ok', text: 'Nothing unread' }));
         c.forEach(function (x) { counts.appendChild(h('span', { class: 'chip ' + ({ critical: 'chip-bad', high: 'chip-warn', normal: 'chip-blue', low: 'chip-low' }[x.priority] || 'chip-low'), text: x.priority + ': ' + x.unread })); });
@@ -250,10 +285,14 @@
       rpc('cc_console_inbox', { p_status: sel.value || null, p_limit: 100 }).then(function (rows) {
         clear(listBox); if (!rows.length) return listBox.appendChild(h('p', { class: 'muted', text: 'Nothing here.' }));
         rows.forEach(function (r) {
+          var acts = h('div', { class: 'row mt' });
+          if (r.status === 'unread') { var b1 = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Mark read' }); b1.addEventListener('click', function (ev) { if (ev.isTrusted) mark(r.id, 'read', b1); }); acts.appendChild(b1); }
+          if (r.status === 'unread' || r.status === 'read') { var b2 = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Dismiss' }); b2.addEventListener('click', function (ev) { if (ev.isTrusted) mark(r.id, 'dismissed', b2); }); acts.appendChild(b2); }
           listBox.appendChild(h('div', { class: 'item' },
             h('div', { class: 'row between' }, h('div', { class: 'row' }, pri(r.priority), h('strong', { text: r.type })), h('span', { class: 'small muted', text: r.status })),
             h('div', null, short(r.subject || '', 120)),
-            h('div', { class: 'small muted', text: when(r.occurred_at) + ' · ' + r.source + (r.action_required ? ' · action: ' + r.action_required : '') })));
+            h('div', { class: 'small muted', text: when(r.occurred_at) + ' · ' + r.source + (r.action_required ? ' · action: ' + r.action_required : '') }),
+            acts.childNodes.length ? acts : null));
         });
       }).catch(function (e) { failure(listBox, e); });
     }
@@ -264,20 +303,40 @@
     var listBox = h('div');
     var sel = h('select', { 'aria-label': 'Show' }, h('option', { value: 'pending', text: 'Waiting for you' }), h('option', { value: '', text: 'All (newest first)' }));
     el.appendChild(h('h1', { text: 'Approvals' })); el.appendChild(h('div', { class: 'card' }, sel)); el.appendChild(listBox);
-    el.appendChild(h('p', { class: 'muted small', text: 'You can read requests here. Approve and Reject buttons come in CC-4; until then nothing can be approved from the console.' }));
+    el.appendChild(h('p', { class: 'muted small', text: 'Approve or Reject records your decision, nothing more. No automatic step carries out an approved request yet.' }));
+    function decide(r, decision, host) {
+      var yes = decision === 'approved';
+      confirmPanel(host, {
+        text: (yes ? 'Approve' : 'Reject') + ' this request? “' + short(r.summary, 100) + '” (' + r.action + ' on ' + short(r.target, 60) + '). This only records your decision.',
+        label: yes ? 'Yes, approve' : 'Yes, reject', danger: !yes, reason: { label: 'Note (optional)', max: 300, optional: true },
+        run: function (note) {
+          return rpc('cc_console_decide', { p_id: r.id, p_decision: decision, p_note: note || null }).then(function (res) {
+            if (res === 'expired') say('That request had already expired, so it was NOT ' + (yes ? 'approved' : 'rejected') + '.'); else say('');
+            return load();
+          });
+        }
+      });
+    }
     function load() {
       loading(listBox);
-      rpc('cc_console_approvals', { p_status: sel.value || null, p_limit: 100 }).then(function (rows) {
+      return rpc('cc_console_approvals', { p_status: sel.value || null, p_limit: 100 }).then(function (rows) {
         clear(listBox); if (!rows.length) return listBox.appendChild(h('p', { class: 'muted', text: 'No approvals waiting.' }));
         rows.forEach(function (r) {
           var cls = { pending: 'chip-warn', approved: 'chip-ok', rejected: 'chip-bad' }[r.status] || 'chip-low';
-          listBox.appendChild(h('div', { class: 'item' },
+          var item = h('div', { class: 'item' },
             h('div', { class: 'row between' }, h('strong', { text: r.action }), h('span', { class: 'chip ' + cls, text: r.status })),
             h('div', { text: r.summary }),
             h('dl', { class: 'kv' }, h('dt', { text: 'Requested by' }), h('dd', { text: r.requester }), h('dt', { text: 'Target' }), h('dd', { class: 'mono', text: r.target }),
               h('dt', { text: 'Asked' }), h('dd', { text: when(r.requested_at) }), h('dt', { text: 'Expires' }), h('dd', { text: when(r.expires_at) }),
               r.decided_at ? h('dt', { text: 'Decided' }) : null, r.decided_at ? h('dd', { text: when(r.decided_at) + ' by ' + short(r.decided_by, 40) }) : null,
-              r.note ? h('dt', { text: 'Note' }) : null, r.note ? h('dd', { text: r.note }) : null)));
+              r.note ? h('dt', { text: 'Note' }) : null, r.note ? h('dd', { text: r.note }) : null));
+          if (r.status === 'pending') {
+            var bA = h('button', { class: 'btn btn-ok btn-sm', type: 'button', text: 'Approve' }), bR = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Reject' });
+            bA.addEventListener('click', function (ev) { if (ev.isTrusted) decide(r, 'approved', item); });
+            bR.addEventListener('click', function (ev) { if (ev.isTrusted) decide(r, 'rejected', item); });
+            item.appendChild(h('div', { class: 'row mt' }, bA, bR));
+          }
+          listBox.appendChild(item);
         });
       }).catch(function (e) { failure(listBox, e); });
     }
@@ -287,15 +346,25 @@
   pages.stop = function (el) {
     var box = h('div');
     el.appendChild(h('h1', { text: 'Emergency stop' })); el.appendChild(box);
-    el.appendChild(h('p', { class: 'muted small', text: 'Status only. Engaging and releasing the stop from here comes in CC-4. Until then it stays a database command run by you.' }));
+    el.appendChild(h('p', { class: 'muted small', text: 'The stop is a flag that automation must obey. Today it is enforced for agent approval requests (refused while stopped); pieces built later read the same flag. Every engage and release is written to the audit log with your reason.' }));
     loading(box);
     refreshStopChip().then(function (s) {
       clear(box);
       if (!s) return box.appendChild(h('div', { class: 'status status-warn' }, h('span', { class: 'dot' }), h('span', { class: 'big', text: 'Status unknown' })));
       box.appendChild(h('div', { class: 'status ' + (s.engaged ? 'status-bad' : 'status-ok') }, h('span', { class: 'dot' }),
         h('span', { class: 'big', text: s.engaged ? 'STOPPED: automation is paused' : 'Running normally' })));
-      box.appendChild(h('div', { class: 'card mt' }, h('dl', { class: 'kv' },
-        h('dt', { text: 'Last change' }), h('dd', { text: when(s.changed_at) }), h('dt', { text: 'Reason' }), h('dd', { text: s.reason || '—' }))));
+      var card = h('div', { class: 'card mt' }, h('dl', { class: 'kv' },
+        h('dt', { text: 'Last change' }), h('dd', { text: when(s.changed_at) }), h('dt', { text: 'Reason' }), h('dd', { text: s.reason || '—' })));
+      var btn = h('button', { class: 'btn ' + (s.engaged ? 'btn-ok' : 'btn-danger'), type: 'button', text: s.engaged ? 'Release the stop' : 'Engage emergency stop' });
+      btn.addEventListener('click', function (ev) {
+        if (!ev.isTrusted) return;
+        confirmPanel(card, s.engaged
+          ? { text: 'Release the stop? Automation may resume.', label: 'Release', reason: { label: 'Reason (at least 5 characters)', min: 5, max: 300 }, typed: 'RELEASE',
+              run: function (why) { return rpc('cc_console_stop_release', { p_reason: why }).then(function () { return route(); }); } }
+          : { text: 'Engage the emergency stop now? Agents will be refused until you release it.', label: 'Engage stop', danger: true, reason: { label: 'Reason (at least 5 characters)', min: 5, max: 300 },
+              run: function (why) { return rpc('cc_console_stop_engage', { p_reason: why }).then(function () { return route(); }); } });
+      });
+      card.appendChild(h('div', { class: 'row mt' }, btn)); box.appendChild(card);
     });
   };
 
