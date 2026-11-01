@@ -126,7 +126,7 @@
     return request('GET', '/auth/v1/user', null, S.access).catch(function (e) { e.message += ' (user lookup, ' + hint() + ')'; throw e; }).then(function (u) {
       var f = (u.factors || []).filter(function (x) { return x.factor_type === 'totp' && x.status === 'verified'; })[0];
       if (f) return askCode(f.id, null);
-      return request('POST', '/auth/v1/factors', { factor_type: 'totp', friendly_name: 'console-' + Date.now(), issuer: 'PropBazaar Console' })
+      return request('POST', '/auth/v1/factors', { factor_type: 'totp', friendly_name: 'console-' + Date.now(), issuer: 'PropBazaar Console' }, S.access)
         .then(function (en) { return askCode(en.id, en.totp); }, function (e) { e.message += ' (factor enrol, ' + hint() + ')'; throw e; });
     });
   }
