@@ -33,7 +33,7 @@
   function request(method, path, body, token) {
     if (!allowed(method, path)) return Promise.reject(new Error('blocked: ' + method + ' ' + path));
     var headers = { apikey: C.key, 'Content-Type': 'application/json' };
-    headers.Authorization = 'Bearer ' + (token || C.key);
+    if (token) headers.Authorization = 'Bearer ' + token;   // never send the publishable key as a Bearer token (it is not a JWT)
     return fetch(C.url + path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', credentials: 'omit' })
       .then(function (r) {
         return r.text().then(function (t) {
@@ -110,10 +110,12 @@
       h('h1', { text: 'Owner sign in' }), h('p', { class: 'muted small', text: 'Read-only console. A second-factor code is required after your password.' }),
       h('label', { for: 'email', text: 'Email' }), email, h('label', { for: 'pw', text: 'Password' }), pw, err, h('div', { class: 'row mt' }, btn));
     form.addEventListener('submit', function (ev) {
-      ev.preventDefault(); err.hidden = true; btn.disabled = true;
+      ev.preventDefault(); err.hidden = true;
+      if (!email.value.trim() || !pw.value) { err.textContent = 'Type your email and password.'; err.hidden = false; return; }
+      btn.disabled = true; var step = 'password sign-in';
       request('POST', '/auth/v1/token?grant_type=password', { email: email.value.trim(), password: pw.value })
-        .then(function (j) { pw.value = ''; setSession(j, email.value.trim()); saveRefresh(null); return secondFactor(); })
-        .catch(function (e) { err.textContent = /Invalid login/i.test(e.message) ? 'Email or password is wrong.' : e.message; err.hidden = false; btn.disabled = false; });
+        .then(function (j) { pw.value = ''; setSession(j, email.value.trim()); saveRefresh(null); step = 'second-factor setup'; return secondFactor(); })
+        .catch(function (e) { err.textContent = /Invalid login/i.test(e.message) ? 'Email or password is wrong.' : e.message + ' [' + step + ']'; err.hidden = false; btn.disabled = false; });
     });
     app.appendChild(form);
   }
