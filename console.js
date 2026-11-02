@@ -27,7 +27,7 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
-  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -360,10 +360,10 @@
 
   pages.outreach = function (el) {
     var CH = 500, picked = null, previewDone = null, running = false;
-    var summary = h('div', { class: 'card' }), importBox = h('div', { class: 'card' }), batchBox = h('div'), campBox = h('div');
+    var summary = h('div', { class: 'card' }), importBox = h('div', { class: 'card' }), findBox = h('div', { class: 'card' }), batchBox = h('div'), campBox = h('div');
     el.appendChild(h('h1', { text: 'Outreach' }));
     el.appendChild(h('p', { class: 'muted small', text: 'Agents you choose yourself. Sending needs an approved campaign AND the engine switched ON below (typed confirmation, owner login with second factor, every switch is audit-logged). Sending is capped per day, so a big list is simply worked through slowly.' }));
-    el.appendChild(summary); el.appendChild(h('h2', { text: 'Import agent e-mails' })); el.appendChild(importBox); el.appendChild(h('h2', { text: 'Imports so far' })); el.appendChild(batchBox); el.appendChild(h('h2', { text: 'Introduction campaign' })); el.appendChild(campBox);
+    el.appendChild(summary); el.appendChild(h('h2', { text: 'Import agent e-mails' })); el.appendChild(importBox); el.appendChild(h('h2', { text: 'Find agents automatically' })); el.appendChild(findBox); el.appendChild(h('h2', { text: 'Imports so far' })); el.appendChild(batchBox); el.appendChild(h('h2', { text: 'Introduction campaign' })); el.appendChild(campBox);
 
     function kv(pairs) { var dl = h('dl', { class: 'kv wide' }); pairs.forEach(function (p) { dl.appendChild(h('dt', { text: p[0] })); dl.appendChild(h('dd', { text: String(p[1]) })); }); return dl; }
     function loadSummary() {
@@ -449,6 +449,57 @@
         .catch(function (e) { prog.textContent = ''; result.appendChild(h('p', { class: 'err', text: 'Stopped: ' + e.message + '. Nothing is lost: choose the same file again, run the check, and import again; people already added are skipped.' })); loadSummary(); loadBatches(); })
         .then(function () { setBusy(false); });
     });
+
+    // ----- agent finder: public listings + each agency's own published business e-mail; you review, then import -----
+    (function finder() {
+      var CITY_LIST = ['Islamabad', 'Rawalpindi', 'Lahore', 'Karachi', 'Peshawar', 'Faisalabad', 'Multan', 'Quetta', 'Gujranwala', 'Sialkot', 'Hyderabad'], FREE = /@(gmail|yahoo|hotmail|outlook|live|icloud|ymail)\./i, ROLEX = /^(info|admin|sales|contact|office|support|hello|enquiries|inquiries|marketing|accounts|noreply|no-reply|webmaster|mail|team)@/i;
+      var boxes = {}, running = false, stop = false, found = new Map(), picks = new Map(), attest2 = h('input', { type: 'checkbox', id: 'attest2' });
+      var cityRow = h('div', { class: 'row mt' }); CITY_LIST.forEach(function (c) { var b = h('input', { type: 'checkbox', 'aria-label': 'City ' + c }); if (c === 'Islamabad' || c === 'Rawalpindi') b.checked = true; boxes[c] = b; cityRow.appendChild(h('label', { class: 'small' }, b, ' ' + c + '  ')); });
+      var go = h('button', { class: 'btn btn-ok', type: 'button', text: '🔎 Find agents', 'aria-label': 'Find agents' }), halt = h('button', { class: 'btn btn-light', type: 'button', text: '⏹ Stop', 'aria-label': 'Stop searching', hidden: 'hidden' });
+      var prog = h('p', { class: 'small muted' }), list = h('div'), outcome = h('div');
+      findBox.appendChild(h('p', { class: 'small', text: 'Looks up real-estate agencies in the cities you tick from public map listings, then reads each agency\'s own website for the business e-mail it publishes. It obeys each site\'s robots.txt, reads at most 3 pages per site and never signs in anywhere. Nothing is saved or sent here: you review the list, untick anything you do not want, and only then import it.' }));
+      findBox.appendChild(cityRow); findBox.appendChild(h('div', { class: 'row mt' }, go, halt)); findBox.appendChild(prog); findBox.appendChild(list); findBox.appendChild(outcome);
+      function add(r, city) { (r.found || []).forEach(function (f) { var em = String(f.email || '').toLowerCase(); if (!em || found.has(em)) return; found.set(em, { email: em, name: r.name || '', city: r.city || city, source: f.source || '', own: !!f.own }); }); }
+      function render() {
+        clear(list); clear(outcome); var rows = Array.from(found.values()); if (!rows.length) return;
+        rows.sort(function (a, b) { return (b.own - a.own) || a.email.localeCompare(b.email); });
+        list.appendChild(h('h3', { text: rows.length + ' addresses found. Tick the ones to import.' }));
+        var count = h('p', { class: 'small strong' }), goImp = h('button', { class: 'btn btn-ok', type: 'button', text: 'Import selected', disabled: 'disabled' });
+        function refresh() { var n = 0; picks.forEach(function (v) { if (v) n++; }); count.textContent = n + ' selected'; goImp.disabled = running || !n || !attest2.checked; }
+        rows.slice(0, 3000).forEach(function (r) {
+          var free = FREE.test(r.email), role = ROLEX.test(r.email); if (!picks.has(r.email)) picks.set(r.email, r.own && !free && !role);
+          var cb = h('input', { type: 'checkbox', 'aria-label': 'Select ' + r.email }); cb.checked = picks.get(r.email); cb.addEventListener('change', function () { picks.set(r.email, cb.checked); refresh(); });
+          var tags = [r.city, r.own ? 'own website address' : 'not on agency domain', free ? 'Gmail/Yahoo style' : '', role ? 'general address' : ''].filter(Boolean).join(' · ');
+          var line = h('div', { class: 'small' }, h('label', null, cb, ' ', h('strong', { text: r.email }), ' ', r.name ? '(' + r.name + ')' : ''), ' '); if (/^https?:\/\//.test(r.source)) line.appendChild(h('a', { href: r.source, target: '_blank', rel: 'noopener noreferrer', text: '[source]' })); line.appendChild(h('div', { class: 'muted', text: tags })); list.appendChild(line);
+        });
+        if (rows.length > 3000) list.appendChild(h('p', { class: 'muted small', text: 'Showing the first 3000. Run the search again later for more.' }));
+        list.appendChild(count);
+        list.appendChild(h('div', { class: 'panel mt' }, h('label', { class: 'strong' }, attest2, ' I have looked at this list. These are business e-mail addresses that agents or agencies publish themselves, and I may send each of them one introduction with an unsubscribe link.'), h('div', { class: 'row mt' }, goImp)));
+        attest2.addEventListener('change', refresh); refresh();
+        goImp.addEventListener('click', function (ev) {
+          if (!ev.isTrusted || running || !attest2.checked) return; var sel = rows.filter(function (r) { return picks.get(r.email); }).map(function (r) { return { email: r.email, name: r.name }; }); if (!sel.length) return;
+          var batch = 'find-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), tot = { received: 0, new: 0, alreadyKnown: 0, suppressed: 0 }; running = true; goImp.disabled = true; prog.textContent = 'Importing…';
+          (async function () { for (var i = 0; i < sel.length; i += 500) { var r = await outreach({ action: 'importCommit', batch: batch, fileName: 'Agent finder', rows: sel.slice(i, i + 500), attested: true, skipRole: false }); ['received', 'new', 'alreadyKnown', 'suppressed'].forEach(function (k) { tot[k] += r.counts[k] || 0; }); } })()
+            .then(function () { prog.textContent = 'Done.'; clear(outcome); outcome.appendChild(h('p', { class: 'strong', text: 'Imported (batch ' + batch + '): ' + tot.new + ' new, ' + tot.alreadyKnown + ' already known, ' + tot.suppressed + ' blocked before.' })); found.clear(); picks.clear(); attest2.checked = false; clear(list); return Promise.all([loadSummary(), loadBatches()]); })
+            .catch(function (e) { prog.textContent = ''; outcome.appendChild(h('p', { class: 'err', text: 'Stopped: ' + e.message + '. People already added are skipped if you import again.' })); }).then(function () { running = false; refresh(); });
+        });
+      }
+      go.addEventListener('click', function (ev) {
+        if (!ev.isTrusted || running) return; var cities = CITY_LIST.filter(function (c) { return boxes[c].checked; }); if (!cities.length) { prog.textContent = 'Tick at least one city.'; return; }
+        running = true; stop = false; go.disabled = true; halt.hidden = false; found.clear(); picks.clear(); clear(list); clear(outcome);
+        (async function () {
+          for (var ci = 0; ci < cities.length && !stop; ci++) {
+            var city = cities[ci], agencies; prog.textContent = city + ': looking up agencies…';
+            try { agencies = (await outreach({ action: 'findAgencies', city: city })).agencies || []; } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
+            for (var i = 0; i < agencies.length && !stop; i += 6) {
+              prog.textContent = city + ': read ' + Math.min(i, agencies.length) + ' of ' + agencies.length + ' agencies · ' + found.size + ' addresses found so far';
+              try { var r = await outreach({ action: 'findCrawl', sites: agencies.slice(i, i + 6) }); (r.results || []).forEach(function (x) { add(x, city); }); } catch (e) { /* skip this group, carry on */ }
+            }
+          }
+        })().then(function () { prog.textContent = (stop ? 'Stopped. ' : 'Finished. ') + found.size + ' addresses found. Nothing has been saved or sent.'; render(); }).catch(function (e) { prog.textContent = 'Stopped: ' + e.message; render(); }).then(function () { running = false; go.disabled = false; halt.hidden = true; });
+      });
+      halt.addEventListener('click', function (ev) { if (ev.isTrusted) stop = true; });
+    })();
 
     // ----- batches (undo only removes people who have not been e-mailed yet) -----
     function loadBatches() {
