@@ -27,6 +27,28 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
+  var BOX = { Islamabad: [33.45, 72.80, 33.85, 73.30], Rawalpindi: [33.45, 72.90, 33.80, 73.20], Lahore: [31.30, 74.15, 31.70, 74.55], Karachi: [24.75, 66.85, 25.20, 67.40], Peshawar: [33.90, 71.40, 34.10, 71.65], Faisalabad: [31.30, 72.95, 31.55, 73.25], Multan: [30.10, 71.35, 30.30, 71.60], Quetta: [30.10, 66.90, 30.30, 67.10], Gujranwala: [32.10, 74.10, 32.25, 74.25], Sialkot: [32.45, 74.45, 32.60, 74.60], Hyderabad: [25.30, 68.30, 25.50, 68.45] };
+  // The map lookup runs in THIS browser (your phone's own connection): the public map servers refuse requests from cloud servers. Public business data only; the agencies' own sites are still read by the server, which obeys robots.txt.
+  async function mapLookup(city) {
+    if (!BOX[city]) throw new Error('unknown city');
+    var q = '[out:json][timeout:25];nwr["office"="estate_agent"](' + BOX[city].join(',') + ');out tags 800;', tried = [], j = null;
+    var EP = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+    for (var i = 0; i < EP.length && !j; i++) {
+      var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 30000);
+      try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else tried.push(host + ': HTTP ' + r.status); }
+      catch (e) { tried.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
+    }
+    if (!j) throw new Error(tried.join('; '));
+    var els = j.elements || [], seen = {}, out = [];
+    els.forEach(function (el) {
+      var t = el.tags || {}, site = String(t.website || t['contact:website'] || t.url || '').slice(0, 300), mail = String(t.email || t['contact:email'] || '').split(/[;,\s]+/)[0].toLowerCase().slice(0, 120);
+      if (!/^https?:\/\//i.test(site)) site = site ? 'https://' + site : '';
+      if (!site && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return;
+      var key = (site ? site.replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase() : '') || mail; if (seen[key]) return; seen[key] = 1;
+      out.push({ name: String(t.name || t['name:en'] || key).slice(0, 80), website: site, email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail) ? mail : '', city: city });
+    });
+    return { agencies: out, total: els.length };
+  }
   var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
@@ -490,7 +512,7 @@
         (async function () {
           for (var ci = 0; ci < cities.length && !stop; ci++) {
             var city = cities[ci], agencies; prog.textContent = city + ': looking up agencies…';
-            var before = found.size; try { var la = await outreach({ action: 'findAgencies', city: city }); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + ' agencies on the map, ' + agencies.length + ' with a website or e-mail'); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
+            var before = found.size; try { var la = await mapLookup(city); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + ' agencies on the map, ' + agencies.length + ' with a website or e-mail'); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
             for (var i = 0; i < agencies.length && !stop; i += 6) {
               prog.textContent = city + ': read ' + Math.min(i, agencies.length) + ' of ' + agencies.length + ' agencies · ' + found.size + ' addresses found so far';
               try { var r = await outreach({ action: 'findCrawl', sites: agencies.slice(i, i + 6) }); (r.results || []).forEach(function (x) { add(x, city); }); } catch (e) { /* skip this group, carry on */ }
