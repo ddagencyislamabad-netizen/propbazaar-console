@@ -11,7 +11,7 @@
 
   // ---------- allow-list: the console can ONLY make these calls ----------
   var RPC = ['cc_console_verify', 'cc_console_audit', 'cc_console_anchors', 'cc_console_stop',
-             'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_approvals', 'cc_console_collectors'];
+             'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_export', 'cc_console_approvals', 'cc_console_collectors'];
   var WRITE = ['cc_console_decide', 'cc_console_notification_set', 'cc_console_stop_engage', 'cc_console_stop_release'];
   var AUTH = [
     ['POST', /^\/auth\/v1\/token\?grant_type=(password|refresh_token)$/],
@@ -27,7 +27,7 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
-  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -35,7 +35,7 @@
       .then(function (r) { return r.text().then(function (t) {
         var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
         if (r.status === 401 && !retried) return refresh().then(function () { return outreach(body, true); });
-        if (!r.ok || !j || j.ok === false) { var e = new Error((j && j.error) ? friendly(j.error) : ('HTTP ' + r.status + (r.status === 401 ? ' (not signed in as owner with second factor)' : ''))); e.status = r.status; throw e; }
+        if (!r.ok || !j || j.ok === false) { var e = new Error((j && j.error) ? friendly(j.error) + (j.detail ? ' (' + j.detail + ')' : '') : ('HTTP ' + r.status + (r.status === 401 ? ' (not signed in as owner with second factor)' : ''))); e.status = r.status; throw e; }
         return j;
       }); });
   }
@@ -360,10 +360,10 @@
 
   pages.outreach = function (el) {
     var CH = 500, picked = null, previewDone = null, running = false;
-    var summary = h('div', { class: 'card' }), importBox = h('div', { class: 'card' }), findBox = h('div', { class: 'card' }), batchBox = h('div'), campBox = h('div');
+    var summary = h('div', { class: 'card' }), exportBox = h('div', { class: 'card' }), importBox = h('div', { class: 'card' }), findBox = h('div', { class: 'card' }), batchBox = h('div'), campBox = h('div');
     el.appendChild(h('h1', { text: 'Outreach' }));
     el.appendChild(h('p', { class: 'muted small', text: 'Agents you choose yourself. Sending needs an approved campaign AND the engine switched ON below (typed confirmation, owner login with second factor, every switch is audit-logged). Sending is capped per day, so a big list is simply worked through slowly.' }));
-    el.appendChild(summary); el.appendChild(h('h2', { text: 'Import agent e-mails' })); el.appendChild(importBox); el.appendChild(h('h2', { text: 'Find agents automatically' })); el.appendChild(findBox); el.appendChild(h('h2', { text: 'Imports so far' })); el.appendChild(batchBox); el.appendChild(h('h2', { text: 'Introduction campaign' })); el.appendChild(campBox);
+    el.appendChild(summary); el.appendChild(h('h2', { text: 'Import agent e-mails' })); el.appendChild(importBox); el.appendChild(h('h2', { text: 'Find agents automatically' })); el.appendChild(findBox); el.appendChild(h('h2', { text: 'Download contacts' })); el.appendChild(exportBox); el.appendChild(h('h2', { text: 'Imports so far' })); el.appendChild(batchBox); el.appendChild(h('h2', { text: 'Introduction campaign' })); el.appendChild(campBox);
 
     function kv(pairs) { var dl = h('dl', { class: 'kv wide' }); pairs.forEach(function (p) { dl.appendChild(h('dt', { text: p[0] })); dl.appendChild(h('dd', { text: String(p[1]) })); }); return dl; }
     function loadSummary() {
@@ -461,7 +461,7 @@
       findBox.appendChild(cityRow); findBox.appendChild(h('div', { class: 'row mt' }, go, halt)); findBox.appendChild(prog); findBox.appendChild(list); findBox.appendChild(outcome);
       function add(r, city) { (r.found || []).forEach(function (f) { var em = String(f.email || '').toLowerCase(); if (!em || found.has(em)) return; found.set(em, { email: em, name: r.name || '', city: r.city || city, source: f.source || '', own: !!f.own }); }); }
       function render() {
-        clear(list); clear(outcome); var rows = Array.from(found.values()); if (!rows.length) return;
+        clear(list); var rows = Array.from(found.values()); if (!rows.length) return;
         rows.sort(function (a, b) { return (b.own - a.own) || a.email.localeCompare(b.email); });
         list.appendChild(h('h3', { text: rows.length + ' addresses found. Tick the ones to import.' }));
         var count = h('p', { class: 'small strong' }), goImp = h('button', { class: 'btn btn-ok', type: 'button', text: 'Import selected', disabled: 'disabled' });
@@ -486,19 +486,55 @@
       }
       go.addEventListener('click', function (ev) {
         if (!ev.isTrusted || running) return; var cities = CITY_LIST.filter(function (c) { return boxes[c].checked; }); if (!cities.length) { prog.textContent = 'Tick at least one city.'; return; }
-        running = true; stop = false; go.disabled = true; halt.hidden = false; found.clear(); picks.clear(); clear(list); clear(outcome);
+        running = true; stop = false; go.disabled = true; halt.hidden = false; found.clear(); picks.clear(); clear(list); clear(outcome); var notes = [];
         (async function () {
           for (var ci = 0; ci < cities.length && !stop; ci++) {
             var city = cities[ci], agencies; prog.textContent = city + ': looking up agencies…';
-            try { agencies = (await outreach({ action: 'findAgencies', city: city })).agencies || []; } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
+            var before = found.size; try { var la = await outreach({ action: 'findAgencies', city: city }); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + ' agencies on the map, ' + agencies.length + ' with a website or e-mail'); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
             for (var i = 0; i < agencies.length && !stop; i += 6) {
               prog.textContent = city + ': read ' + Math.min(i, agencies.length) + ' of ' + agencies.length + ' agencies · ' + found.size + ' addresses found so far';
               try { var r = await outreach({ action: 'findCrawl', sites: agencies.slice(i, i + 6) }); (r.results || []).forEach(function (x) { add(x, city); }); } catch (e) { /* skip this group, carry on */ }
             }
+            notes[notes.length - 1] += ', ' + (found.size - before) + ' new addresses';
           }
-        })().then(function () { prog.textContent = (stop ? 'Stopped. ' : 'Finished. ') + found.size + ' addresses found. Nothing has been saved or sent.'; render(); }).catch(function (e) { prog.textContent = 'Stopped: ' + e.message; render(); }).then(function () { running = false; go.disabled = false; halt.hidden = true; });
+        })().then(function () { prog.textContent = (stop ? 'Stopped. ' : 'Finished. ') + found.size + ' addresses found. Nothing has been saved or sent.'; notes.forEach(function (n) { outcome.appendChild(h('p', { class: 'small muted', text: n })); }); render(); }).catch(function (e) { prog.textContent = 'Stopped: ' + e.message; render(); }).then(function () { running = false; go.disabled = false; halt.hidden = true; });
       });
       halt.addEventListener('click', function (ev) { if (ev.isTrusted) stop = true; });
+    })();
+
+    // ----- download contacts (CSV or Excel) for your own follow-up lists -----
+    (function exporter() {
+      var LIVE_COLS = { agents: ['group', 'name', 'email', 'phone', 'agency', 'city', 'plan', 'status', 'joined'], sellers: ['group', 'name', 'email', 'phone', 'agency', 'city', 'account', 'listings', 'for_sale_or_rent', 'first_listing'], enquiries: ['group', 'name', 'email', 'phone', 'city', 'listing', 'for_sale_or_rent', 'message', 'when'], signups: ['group', 'name', 'email', 'phone', 'city', 'source', 'when'] };
+      LIVE_COLS.buyers = LIVE_COLS.agents;
+      var L9 = ['group', 'name', 'email', 'status', 'can_use_for_campaign', 'source', 'consent_date'];
+      var SETS = [
+        { id: 'l9-all', label: 'Everyone in the outreach list (all groups)', l9: /./ }, { id: 'l9-agents', label: 'Agents (imported or signed up)', l9: /^agent/ }, { id: 'l9-owners', label: 'Property owners who signed up on the landing page', l9: /^property owner/ },
+        { id: 'l9-seekers', label: 'Buyers / seekers who signed up on the landing page', l9: /^buyer/ }, { id: 'l9-optins', label: 'Website opt-ins (confirmed e-mail updates)', l9: /^website opt-in/ }, { id: 'l9-enq', label: 'Listing enquirers (outreach list)', l9: /^enquirer/ },
+        { id: 'v-agents', label: 'Site: registered agents', kind: 'agents' }, { id: 'v-buyers', label: 'Site: registered buyers', kind: 'buyers' }, { id: 'v-sellers', label: 'Site: sellers / people who posted a listing', kind: 'sellers' },
+        { id: 'v-enq', label: 'Site: buyer enquiries on listings', kind: 'enquiries' }, { id: 'v-signups', label: 'Site: sign-up contacts (visitors who left details)', kind: 'signups' }];
+      var sel = h('select', { 'aria-label': 'What to download' }); SETS.forEach(function (x) { sel.appendChild(h('option', { value: x.id, text: x.label })); });
+      var fmt = h('select', { 'aria-label': 'File type' }); fmt.appendChild(h('option', { value: 'csv', text: 'CSV (opens in Excel, Sheets, WPS)' })); fmt.appendChild(h('option', { value: 'xlsx', text: 'Excel (.xlsx)' }));
+      var go = h('button', { class: 'btn btn-ok', type: 'button', text: '⬇ Download', 'aria-label': 'Download contacts' }), prog = h('p', { class: 'small muted' }), host = h('div');
+      exportBox.appendChild(h('p', { class: 'small', text: 'Download a list to your phone for your own follow-up. Choose a group and a file type. Only people who gave PropBazaar their details are in these lists: visitors who only browsed leave nothing behind. The "can_use_for_campaign" column says which people may be e-mailed by the outreach engine; site users and buyers are NOT automatically campaign contacts. These files hold personal data: keep them private, and delete them when finished.' }));
+      exportBox.appendChild(h('div', { class: 'row mt' }, sel)); exportBox.appendChild(h('div', { class: 'row mt' }, fmt)); exportBox.appendChild(h('div', { class: 'row mt' }, go)); exportBox.appendChild(prog); exportBox.appendChild(host);
+      async function collect(set) {
+        var rows = [], off = 0;
+        if (set.kind) { for (;;) { var page = await rpc('cc_console_export', { p_kind: set.kind, p_offset: off, p_limit: 1000 }); rows = rows.concat(page || []); prog.textContent = rows.length + ' rows…'; if (!page || page.length < 1000) break; off += 1000; } return { rows: rows, cols: LIVE_COLS[set.kind] }; }
+        for (;;) { var r = await outreach({ action: 'exportLeads', offset: off, limit: 1000 }); r.rows.forEach(function (x) { if (set.l9.test(x.group)) rows.push(x); }); prog.textContent = rows.length + ' rows…'; if (r.next == null) break; off = r.next; }
+        return { rows: rows, cols: L9 };
+      }
+      go.addEventListener('click', function (ev) {
+        if (!ev.isTrusted) return; var set = SETS.filter(function (x) { return x.id === sel.value; })[0];
+        confirmPanel(host, { text: 'Download "' + set.label + '" as ' + (fmt.value === 'csv' ? 'CSV' : 'Excel') + '? The file contains personal contact details. This download is written to the audit log.', label: 'Yes, download', typed: 'EXPORT', run: function () {
+          prog.textContent = 'Preparing…'; go.disabled = true;
+          return collect(set).then(function (d) {
+            if (!d.rows.length) { prog.textContent = 'Nothing to download in that group yet.'; return; }
+            var cols = d.cols.map(function (k) { return { key: k, title: k.replace(/_/g, ' ') }; }), stamp = new Date().toISOString().slice(0, 10), name = 'propbazaar-' + set.id + '-' + stamp + '.' + fmt.value;
+            PBExport.download(fmt.value === 'csv' ? PBExport.csv(cols, d.rows) : PBExport.xlsx(cols, d.rows, set.label), name); prog.textContent = 'Downloaded ' + d.rows.length + ' rows as ' + name + '. Check your phone\'s Downloads folder.'; var p = host.querySelector('.panel'); if (p) p.remove();
+          }).catch(function (e) { prog.textContent = ''; throw new Error(/cc_console_export|PGRST202|Could not find/i.test(e.message) ? 'The live-site export is not installed yet. The outreach-list downloads work; the "Site:" ones need the export function added first.' : e.message); })
+            .then(function (v) { go.disabled = false; return v; }, function (e) { go.disabled = false; throw e; });
+        } });
+      });
     })();
 
     // ----- batches (undo only removes people who have not been e-mailed yet) -----
