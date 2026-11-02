@@ -32,11 +32,15 @@
   async function mapLookup(city) {
     if (!BOX[city]) throw new Error('unknown city');
     var q = '[out:json][timeout:25];nwr["office"="estate_agent"](' + BOX[city].join(',') + ');out tags 800;', tried = [], j = null;
-    var EP = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-    for (var i = 0; i < EP.length && !j; i++) {
-      var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 30000);
-      try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else tried.push(host + ': HTTP ' + r.status); }
-      catch (e) { tried.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
+    var EP = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.openstreetmap.fr/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+    // the free map servers are often busy (502/503/504/429): go round the list up to 3 times, with a short pause between rounds
+    for (var round = 0; round < 3 && !j; round++) {
+      if (round) await new Promise(function (r) { setTimeout(r, 5000); });
+      for (var i = 0; i < EP.length && !j; i++) {
+        var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 20000);
+        try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 2) tried.push(host + ': HTTP ' + r.status); }
+        catch (e) { if (round === 2) tried.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
+      }
     }
     if (!j) throw new Error(tried.join('; '));
     var els = j.elements || [], seen = {}, out = [];
