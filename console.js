@@ -11,8 +11,8 @@
 
   // ---------- allow-list: the console can ONLY make these calls ----------
   var RPC = ['cc_console_verify', 'cc_console_audit', 'cc_console_anchors', 'cc_console_stop',
-             'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_export', 'cc_console_approvals', 'cc_console_collectors'];
-  var WRITE = ['cc_console_decide', 'cc_console_notification_set', 'cc_console_stop_engage', 'cc_console_stop_release'];
+             'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_export', 'cc_console_approvals', 'cc_console_collectors', 'cc_console_integrations', 'cc_console_automations'];
+  var WRITE = ['cc_console_decide', 'cc_console_notification_set', 'cc_console_stop_engage', 'cc_console_stop_release', 'cc_console_integration_request', 'cc_console_automation_request', 'cc_console_integration_set', 'cc_console_automation_set'];
   var AUTH = [
     ['POST', /^\/auth\/v1\/token\?grant_type=(password|refresh_token)$/],
     ['GET',  /^\/auth\/v1\/user$/],
@@ -629,7 +629,57 @@
           h('div', { class: 'small muted', text: r.last_at ? 'Last report: ' + when(r.last_at) : 'No report yet' })));
       });
     }).catch(function (e) { failure(box, e); });
+    connections(el);
   };
+
+  // ---------- integrations and automation chains (CC-6): a switch here only RECORDS your approved state; nothing is connected, sent or run by it ----------
+  function connections(el) {
+    var iBox = h('div'), aBox = h('div'), flash = h('p', { class: 'small strong', hidden: 'hidden' });
+    var SL = { off: ['chip-low', 'OFF'], approved: ['chip-warn', 'APPROVED'], active: ['chip-ok', 'ACTIVE'], suspended: ['chip-bad', 'PAUSED'] };
+    var MAT = { exists: 'exists', partial: 'partly built', missing: 'not built', decision: 'your decision pending' };
+    function nice(e) { var m = String(e && e.message || e); return /APPROVAL_REQUIRED/.test(m) ? 'There is no approved request for this yet (or it is older than 7 days). Ask for approval, then approve it in the Approvals tab.' : /EMERGENCY_STOP_ACTIVE/.test(m) ? 'The emergency stop is on. Release it first.' : /APPROVE_FIRST/.test(m) ? 'Allow it first, then make it active.' : m; }
+    function call(n, a) { return rpc(n, a).catch(function (e) { e.message = nice(e); throw e; }); }
+    function note(t) { flash.textContent = t; flash.hidden = !t; }
+    el.appendChild(h('h2', { text: 'Integrations' }));
+    el.appendChild(h('p', { class: 'muted small', text: 'The services PropBazaar can connect to. Everything starts OFF. A switch here only records what you approved: it does not yet connect, send or run anything. To allow something: Ask for approval, approve it in the Approvals tab, then come back and allow it.' }));
+    el.appendChild(flash); el.appendChild(iBox);
+    el.appendChild(h('h2', { text: 'Automations' }));
+    el.appendChild(h('p', { class: 'muted small', text: 'Example chains of steps. Both are OFF and nothing runs them yet. Steps marked "waits for you" always need your approval first.' }));
+    el.appendChild(aBox);
+    function find(rows, action, key) { var best = null; (rows || []).forEach(function (r) { if (r.action === action && r.target === key && r.status === 'approved' && (!best || r.id > best.id)) best = r; }); return best && (Date.now() - new Date(best.decided_at).getTime() < 7 * 864e5) ? best : null; }
+    function ask(host, fn, key, what) { return function (ev) { if (!ev.isTrusted) return; confirmPanel(host, { text: 'Ask for approval to switch on "' + what + '"? This only creates a request for you to approve in the Approvals tab. Nothing is switched on.', label: 'Yes, ask', run: function () { return call(fn, { p_key: key }).then(function (id) { note('Request sent (approval #' + id + '). Open the Approvals tab, approve it, then come back here.'); }); } }); }; }
+    function load() {
+      loading(iBox); loading(aBox);
+      Promise.all([call('cc_console_integrations'), call('cc_console_automations'), call('cc_console_approvals', { p_status: 'approved', p_limit: 100 })]).then(function (res) {
+        var ints = res[0], autos = res[1], appr = res[2]; clear(iBox); clear(aBox);
+        ints.forEach(function (r) {
+          var sl = SL[r.state] || ['chip-low', r.state], host = h('div'), acts = h('div', { class: 'row mt' }), ok = find(appr, 'integration.enable', r.key);
+          function setState(state, label, typed, danger) { var b = h('button', { class: 'btn btn-sm ' + (danger ? 'btn-light' : 'btn-ok'), type: 'button', text: label });
+            b.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(host, { text: label + ': "' + r.name + '"? This records your decision only.', label: 'Yes', typed: typed || null, danger: false, run: function () { return call('cc_console_integration_set', { p_key: r.key, p_state: state, p_approval_id: (state === 'approved' || state === 'active') ? (ok ? ok.id : (r.approval_id || null)) : null }).then(function () { note(''); return load(); }); } }); }); acts.appendChild(b); }
+          if (r.state === 'off' || r.state === 'suspended') { var bAsk = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Ask for approval' }); bAsk.addEventListener('click', ask(host, 'cc_console_integration_request', r.key, r.name)); acts.appendChild(bAsk); if (ok) setState('approved', 'Allow (approved #' + ok.id + ')', 'ON'); }
+          if (r.state === 'approved') setState('active', 'Make active', 'ON');
+          if (r.state === 'approved' || r.state === 'active') { setState('suspended', 'Pause', null, true); setState('off', 'Switch off', null, true); }
+          if (r.state === 'suspended') setState('off', 'Switch off', null, true);
+          iBox.appendChild(h('div', { class: 'item' },
+            h('div', { class: 'row between' }, h('strong', { text: r.name }), h('span', { class: 'chip ' + sl[0], text: sl[1] })),
+            h('div', { class: 'small muted', text: r.category + ' · ' + (MAT[r.maturity] || r.maturity) }), h('div', { text: r.today }), acts, host));
+        });
+        autos.forEach(function (a) {
+          var host = h('div'), acts = h('div', { class: 'row mt' }), ok = find(appr, 'automation.enable', a.key), steps = h('ol', { class: 'small' });
+          (a.steps || []).forEach(function (st) { steps.appendChild(h('li', { text: st.do + (st.sensitive ? ' (waits for you)' : '') })); });
+          if (a.enabled) { var bOff = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Switch off' }); bOff.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(host, { text: 'Switch off "' + a.name + '"?', label: 'Yes, switch off', run: function () { return call('cc_console_automation_set', { p_key: a.key, p_enabled: false, p_approval_id: null }).then(function () { return load(); }); } }); }); acts.appendChild(bOff); }
+          else {
+            var bAsk = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Ask for approval' }); bAsk.addEventListener('click', ask(host, 'cc_console_automation_request', a.key, a.name)); acts.appendChild(bAsk);
+            if (ok) { var bOn = h('button', { class: 'btn btn-ok btn-sm', type: 'button', text: 'Allow (approved #' + ok.id + ')' }); bOn.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(host, { text: 'Allow "' + a.name + '"? This records your decision only. Nothing runs it yet.', label: 'Yes, allow', typed: 'ON', run: function () { return call('cc_console_automation_set', { p_key: a.key, p_enabled: true, p_approval_id: ok.id }).then(function () { return load(); }); } }); }); acts.appendChild(bOn); }
+          }
+          aBox.appendChild(h('div', { class: 'item' },
+            h('div', { class: 'row between' }, h('strong', { text: a.name }), h('span', { class: 'chip ' + (a.enabled ? 'chip-ok' : 'chip-low'), text: a.enabled ? 'ALLOWED' : 'OFF' })),
+            h('div', { class: 'small muted', text: 'Starts when: ' + a.trigger_event + ' · version ' + a.version + ' · ' + a.runs + ' runs' }), steps, acts, host));
+        });
+      }).catch(function (e) { failure(iBox, e); clear(aBox); });
+    }
+    load();
+  }
 
   pages.stop = function (el) {
     var box = h('div');
