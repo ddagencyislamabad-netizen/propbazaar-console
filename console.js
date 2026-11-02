@@ -27,7 +27,7 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
-  var OUT = ['status','switch', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -386,6 +386,11 @@
           sw.appendChild(on);
         }
         summary.appendChild(sw); summary.appendChild(swHost);
+        var h7 = s.health7d || { sent: 0, bounces: 0, complaints: 0, bounceRate: 0 };
+        summary.appendChild(h('p', { class: 'muted small', text: 'Last 7 days: ' + h7.sent + ' sent, ' + h7.bounces + ' bounced (' + (h7.bounceRate * 100).toFixed(1) + '%), ' + h7.complaints + ' spam complaints. Safe to raise the cap only while bounces stay under 2% and there are no complaints.' }));
+        var capBtn = h('button', { class: 'btn btn-light btn-icon', type: 'button', text: '\u270E Daily cap: ' + s.dailyCap, title: 'Change the daily sending cap', 'aria-label': 'Change daily cap' }), capHost = h('div');
+        capBtn.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(capHost, { text: 'Set the daily sending cap (now ' + s.dailyCap + ', highest allowed ' + (s.maxCap || 500) + '). Suggested ramp: days 1-3 = 20, days 4-7 = 50, days 8-14 = 100, week 3 on = 200, then higher only if bounces stay under 2% and there are no complaints.', label: 'Yes, set cap', typed: 'CAP', reason: { label: 'New daily cap (whole number)', min: 1, max: 3 }, run: function (v) { var n = Number(v); if (!/^\d{1,3}$/.test(v) || n < 1 || n > (s.maxCap || 500)) return Promise.reject(new Error('Enter a whole number from 1 to ' + (s.maxCap || 500))); return outreach({ action: 'setCap', cap: n }).then(loadSummary); } }); });
+        summary.appendChild(h('div', { class: 'row mt' }, capBtn)); summary.appendChild(capHost);
         return s;
       }).catch(function (e) { failure(summary, e); });
     }
