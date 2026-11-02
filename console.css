@@ -54,3 +54,10 @@ input:focus,select:focus,button:focus-visible,a:focus-visible{outline:3px solid 
 .btn-danger{background:var(--bad)}
 .panel{margin-top:10px;padding:12px;border:2px solid var(--blue);border-radius:12px;background:#F3F6FF}
 .strong{font-weight:600;margin:0 0 6px}
+/* outreach tab */
+.kv.wide{grid-template-columns:minmax(120px,210px) 1fr}
+h2{font-size:17px;margin:18px 0 8px}h3{font-size:15px;margin:12px 0 4px}
+input[type=file]{width:100%;margin-top:6px}
+label input[type=checkbox]{width:auto;margin-right:6px;transform:scale(1.2)}
+.panel.mt{margin-top:12px}
+pre.small{white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto}

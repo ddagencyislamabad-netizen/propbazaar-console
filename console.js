@@ -1,4 +1,4 @@
-/* PropBazaar Command Centre console (CC-5): owner actions behind confirmation; Health page shows the background checks.
+/* PropBazaar Command Centre console (CC-5 + outreach import): owner actions behind confirmation; Health page shows the background checks.
    - No innerHTML anywhere: everything is built with textContent, so data can never become markup.
    - The only network calls are the sign-in/second-factor calls, seven whitelisted READ functions and four whitelisted ACTION functions
      (WRITE below). Actions run only from a confirm button the owner taps; viewing a page never writes anything.
@@ -25,6 +25,21 @@
     if (m) return method === 'POST' && (RPC.indexOf(m[1]) !== -1 || WRITE.indexOf(m[1]) !== -1);
     return AUTH.some(function (a) { return a[0] === method && a[1].test(path); });
   }
+
+  // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
+  var OUT = ['status', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText'];
+  function outreach(body, retried) {
+    if (!S) return Promise.reject(new Error('Signed out'));
+    if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
+    return fetch(C.outreachUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.access }, body: JSON.stringify(body), cache: 'no-store', credentials: 'omit' })
+      .then(function (r) { return r.text().then(function (t) {
+        var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
+        if (r.status === 401 && !retried) return refresh().then(function () { return outreach(body, true); });
+        if (!r.ok || !j || j.ok === false) { var e = new Error((j && j.error) ? friendly(j.error) : ('HTTP ' + r.status + (r.status === 401 ? ' (not signed in as owner with second factor)' : ''))); e.status = r.status; throw e; }
+        return j;
+      }); });
+  }
+  function friendly(c) { return ({ ATTESTATION_REQUIRED: 'Tick the confirmation box first.', CHUNK_TOO_LARGE: 'Internal: chunk too large.', BAD_BATCH: 'Bad batch id.', CLAIM_WORD: 'Text contains a blocked claim word.', UNSUB_MISSING: 'Text needs the unsubscribe link.', NOT_FOUND: 'Not found.' })[c] || c; }
 
   // ---------- session (access token in memory; refresh token in sessionStorage, gone when the tab closes) ----------
   var S = null;                 // { access, refresh, email }
@@ -341,6 +356,122 @@
       }).catch(function (e) { failure(listBox, e); });
     }
     sel.addEventListener('change', load); load();
+  };
+
+  pages.outreach = function (el) {
+    var CH = 500, picked = null, previewDone = null, running = false;
+    var summary = h('div', { class: 'card' }), importBox = h('div', { class: 'card' }), batchBox = h('div'), campBox = h('div');
+    el.appendChild(h('h1', { text: 'Outreach' }));
+    el.appendChild(h('p', { class: 'muted small', text: 'Agents you choose yourself. Nothing is sent from this page: sending needs an approved campaign AND the engine switch, which you turn on yourself in Termux. Sending is capped per day, so a big list is simply worked through slowly.' }));
+    el.appendChild(summary); el.appendChild(h('h2', { text: 'Import agent e-mails' })); el.appendChild(importBox); el.appendChild(h('h2', { text: 'Imports so far' })); el.appendChild(batchBox); el.appendChild(h('h2', { text: 'Introduction campaign' })); el.appendChild(campBox);
+
+    function kv(pairs) { var dl = h('dl', { class: 'kv wide' }); pairs.forEach(function (p) { dl.appendChild(h('dt', { text: p[0] })); dl.appendChild(h('dd', { text: String(p[1]) })); }); return dl; }
+    function loadSummary() {
+      loading(summary);
+      return outreach({ action: 'status' }).then(function (r) {
+        var s = r.status, l = s.leads || {}; clear(summary);
+        summary.appendChild(h('div', { class: 'row between' }, h('strong', { text: 'Engine' }), h('span', { class: 'chip ' + (s.paused ? 'chip-bad' : s.enabled ? 'chip-ok' : 'chip-low'), text: s.paused ? 'PAUSED' : s.enabled ? 'ON' : 'OFF' })));
+        summary.appendChild(kv([['Waiting to be introduced', l.imported || 0], ['Already introduced', l.contacted || 0], ['Signed up / enquired', (l.confirmed || 0) + (l.enquirer || 0)], ['Unsubscribed or blocked', l.suppressed || 0],
+          ['Sent in last 24 h', s.sent24h], ['Daily cap / window', s.dailyCap + ' / ' + s.window], ['Audit chain', s.audit && s.audit.ok ? 'intact (' + s.audit.events + ' events)' : 'PROBLEM']]));
+        if (s.pauseReason) summary.appendChild(h('p', { class: 'err', text: 'Paused: ' + s.pauseReason }));
+        return s;
+      }).catch(function (e) { failure(summary, e); });
+    }
+
+    // ----- import -----
+    var file = h('input', { type: 'file', accept: '.xlsx,.csv,.txt,.tsv', 'aria-label': 'Contact file' });
+    var skipRole = h('input', { type: 'checkbox', id: 'skiprole' });
+    var attest = h('input', { type: 'checkbox', id: 'attest' });
+    var checkBtn = h('button', { class: 'btn btn-light', type: 'button', text: 'Step 1: Check the file (dry run)', disabled: 'disabled' });
+    var goBtn = h('button', { class: 'btn btn-ok', type: 'button', text: 'Step 2: Import', disabled: 'disabled' });
+    var prog = h('p', { class: 'small muted' }), result = h('div');
+    importBox.appendChild(h('p', { class: 'small', text: 'Choose an Excel (.xlsx) or CSV file. It needs a column headed "Email" (a "Name" column is optional). There is no size limit: the file is read piece by piece on this phone and only the e-mail and name go to the server.' }));
+    importBox.appendChild(file);
+    importBox.appendChild(h('div', { class: 'row mt' }, h('label', null, skipRole, ' Skip general addresses like info@ and sales@')));
+    importBox.appendChild(h('div', { class: 'row mt' }, checkBtn)); importBox.appendChild(prog); importBox.appendChild(result);
+    importBox.appendChild(h('div', { class: 'panel mt' }, h('label', { class: 'strong' }, attest, ' I confirm these are business e-mail addresses of property agents or agencies, and that I may send each of them one introduction to PropBazaar. Every e-mail carries an unsubscribe link and unsubscribed people are never e-mailed again.'), h('div', { class: 'row mt' }, goBtn)));
+
+    function setBusy(b) { running = b; file.disabled = b; checkBtn.disabled = b || !picked; refreshGo(); }
+    function refreshGo() { goBtn.disabled = running || !previewDone || !attest.checked || previewDone.counts.new === 0; }
+    file.addEventListener('change', function () { picked = file.files && file.files[0] || null; previewDone = null; clear(result); prog.textContent = picked ? picked.name + ' (' + (picked.size / 1048576).toFixed(1) + ' MB)' : ''; checkBtn.disabled = !picked; refreshGo(); });
+    attest.addEventListener('change', refreshGo);
+    function blank() { return { received: 0, invalid: 0, duplicateInFile: 0, alreadyKnown: 0, suppressed: 0, role: 0, skippedRole: 0, freeMail: 0, new: 0 }; }
+    function add(t, c) { Object.keys(t).forEach(function (k) { t[k] += c[k] || 0; }); }
+    // streams the file, removes repeats across the WHOLE file, sends chunks of CH rows; mode = 'importPreview' | 'importCommit'
+    function pump(mode, batch) {
+      var tot = blank(), seen = new Set(), chunk = [], n = 0, fileDup = 0, rows = 0;
+      function send(rowsArr) {
+        var body = { action: mode, rows: rowsArr, skipRole: skipRole.checked }; if (mode === 'importCommit') { body.batch = batch; body.fileName = picked.name; body.attested = attest.checked; }
+        function attempt(k) { return outreach(body).catch(function (e) { if (k < 3 && (!e.status || e.status >= 500)) return new Promise(function (r) { setTimeout(r, 1500 * (k + 1)); }).then(function () { return attempt(k + 1); }); throw e; }); }
+        return attempt(0).then(function (r) { add(tot, r.counts); });
+      }
+      return (async function () {
+        for await (var c of PBImport.contacts(picked)) {
+          rows++; var key = String(c.email).trim().toLowerCase();
+          if (seen.has(key)) { fileDup++; continue; } seen.add(key); chunk.push({ email: c.email, name: c.name });
+          if (chunk.length >= CH) { var cc = chunk; chunk = []; await send(cc); n += cc.length; prog.textContent = (mode === 'importPreview' ? 'Checked ' : 'Imported ') + rows.toLocaleString() + ' rows…'; }
+        }
+        if (chunk.length) await send(chunk);
+        tot.duplicateInFile += fileDup; tot.received += fileDup; return { counts: tot, rows: rows };
+      })();
+    }
+    function table(c, title) {
+      clear(result); result.appendChild(h('h3', { text: title }));
+      result.appendChild(kv([['Rows read', c.received], ['New contacts', c.new], ['Already in the system', c.alreadyKnown], ['Repeated in the file', c.duplicateInFile], ['Unsubscribed / blocked before', c.suppressed],
+        ['Not a valid e-mail', c.invalid], ['General addresses (info@ etc.)', c.role + (c.skippedRole ? ' (' + c.skippedRole + ' skipped)' : '')], ['Gmail/Yahoo/Hotmail style', c.freeMail]]));
+    }
+    checkBtn.addEventListener('click', function (ev) {
+      if (!ev.isTrusted || !picked || running) return; setBusy(true); previewDone = null; clear(result); prog.textContent = 'Reading the file…'; say('');
+      pump('importPreview').then(function (r) { previewDone = r; prog.textContent = 'Dry run finished. Nothing was saved.'; table(r.counts, 'Dry run result (nothing saved)'); })
+        .catch(function (e) { prog.textContent = ''; result.appendChild(h('p', { class: 'err', text: e.user ? e.message : 'Could not check: ' + e.message })); }).then(function () { setBusy(false); });
+    });
+    goBtn.addEventListener('click', function (ev) {
+      if (!ev.isTrusted || !picked || running || !previewDone || !attest.checked) return;
+      var batch = 'imp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); setBusy(true); prog.textContent = 'Importing…'; say('');
+      pump('importCommit', batch).then(function (r) { previewDone = null; prog.textContent = 'Done.'; table(r.counts, 'Imported (batch ' + batch + ')'); attest.checked = false; return Promise.all([loadSummary(), loadBatches()]); })
+        .catch(function (e) { prog.textContent = ''; result.appendChild(h('p', { class: 'err', text: 'Stopped: ' + e.message + '. Nothing is lost: choose the same file again, run the check, and import again; people already added are skipped.' })); loadSummary(); loadBatches(); })
+        .then(function () { setBusy(false); });
+    });
+
+    // ----- batches (undo only removes people who have not been e-mailed yet) -----
+    function loadBatches() {
+      loading(batchBox);
+      return outreach({ action: 'importBatches' }).then(function (r) {
+        clear(batchBox); if (!r.batches.length) return batchBox.appendChild(h('p', { class: 'muted', text: 'No imports yet.' }));
+        r.batches.forEach(function (b) {
+          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: short(b.file || b.id, 40) }), h('span', { class: 'chip ' + (b.undone ? 'chip-low' : 'chip-blue'), text: b.undone ? 'undone' : 'added ' + b.added })),
+            h('div', { class: 'small muted', text: when(b.at) + ' · ' + b.id + (b.undone ? '' : ' · still waiting: ' + b.waiting) }));
+          if (!b.undone && b.waiting > 0) {
+            var u = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Undo: remove those still waiting' });
+            u.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Remove the ' + b.waiting + ' contacts from this import who have not been e-mailed yet? People already e-mailed stay (so they can be kept off future lists).', label: 'Yes, remove', danger: true,
+              run: function () { return outreach({ action: 'importUndo', batch: b.id }).then(function () { return Promise.all([loadSummary(), loadBatches()]); }); } }); });
+            item.appendChild(h('div', { class: 'row mt' }, u));
+          }
+          batchBox.appendChild(item);
+        });
+      }).catch(function (e) { failure(batchBox, e); });
+    }
+
+    // ----- introduction campaign -----
+    function loadCamps() {
+      loading(campBox);
+      return outreach({ action: 'status' }).then(function (r) {
+        clear(campBox); var camps = r.status.campaigns.filter(function (c) { return c.audience === 'introduction'; });
+        var mk = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: camps.length ? 'Create another copy of the English + Urdu text' : 'Create the English + Urdu introduction text' });
+        mk.addEventListener('click', function (ev) { if (!ev.isTrusted) return; mk.disabled = true; outreach({ action: 'createIntro' }).then(loadCamps).catch(function (e) { say('Not done: ' + e.message); mk.disabled = false; }); });
+        campBox.appendChild(h('div', { class: 'row' }, mk));
+        camps.forEach(function (c) {
+          var det = h('pre', { class: 'small', text: 'Loading…' });
+          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: c.name }), h('span', { class: 'chip ' + (c.active && c.approved ? 'chip-ok' : 'chip-warn'), text: c.active && c.approved ? 'approved, active' : 'not approved' })), det);
+          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s = t.campaign.steps[0]; det.textContent = 'Subject: ' + s.subject + '\n\n' + s.body + '\n\n(Link: ' + t.campaign.link + '; a footer with the postal address and unsubscribe link is added to every e-mail.)'; }).catch(function (e) { det.textContent = e.message; });
+          var row = h('div', { class: 'row mt' });
+          if (!(c.active && c.approved)) { var a = h('button', { class: 'btn btn-ok btn-sm', type: 'button', text: 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly the text above for sending? Nothing is sent until you also switch the engine on in Termux.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(a); }
+          else { var st = h('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Stop this campaign' }); st.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Stop this campaign?', label: 'Yes, stop', danger: true, run: function () { return outreach({ action: 'stopCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(st); }
+          item.appendChild(row); campBox.appendChild(item);
+        });
+      }).catch(function (e) { failure(campBox, e); });
+    }
+    loadSummary(); loadBatches(); loadCamps();
   };
 
   pages.health = function (el) {

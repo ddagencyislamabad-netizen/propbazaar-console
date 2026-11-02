@@ -2,5 +2,6 @@
 window.PB_CONSOLE = {
   url: "https://mlokpggbqjhombrwammv.supabase.co",
   key: "sb_publishable_b8fUDemr-cFd1FXS0kvXuw_aOwooxsY",
+  outreachUrl: "https://atuizzwyslyscrpiixem.supabase.co/functions/v1/outreach/console",
   idleMinutes: 15
 };
