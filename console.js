@@ -27,7 +27,7 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
-  var OUT = ['status', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -362,7 +362,7 @@
     var CH = 500, picked = null, previewDone = null, running = false;
     var summary = h('div', { class: 'card' }), importBox = h('div', { class: 'card' }), batchBox = h('div'), campBox = h('div');
     el.appendChild(h('h1', { text: 'Outreach' }));
-    el.appendChild(h('p', { class: 'muted small', text: 'Agents you choose yourself. Nothing is sent from this page: sending needs an approved campaign AND the engine switch, which you turn on yourself in Termux. Sending is capped per day, so a big list is simply worked through slowly.' }));
+    el.appendChild(h('p', { class: 'muted small', text: 'Agents you choose yourself. Sending needs an approved campaign AND the engine switched ON below (typed confirmation, owner login with second factor, every switch is audit-logged). Sending is capped per day, so a big list is simply worked through slowly.' }));
     el.appendChild(summary); el.appendChild(h('h2', { text: 'Import agent e-mails' })); el.appendChild(importBox); el.appendChild(h('h2', { text: 'Imports so far' })); el.appendChild(batchBox); el.appendChild(h('h2', { text: 'Introduction campaign' })); el.appendChild(campBox);
 
     function kv(pairs) { var dl = h('dl', { class: 'kv wide' }); pairs.forEach(function (p) { dl.appendChild(h('dt', { text: p[0] })); dl.appendChild(h('dd', { text: String(p[1]) })); }); return dl; }
@@ -374,12 +374,24 @@
         summary.appendChild(kv([['Waiting to be introduced', l.imported || 0], ['Already introduced', l.contacted || 0], ['Signed up / enquired', (l.confirmed || 0) + (l.enquirer || 0)], ['Unsubscribed or blocked', l.suppressed || 0],
           ['Sent in last 24 h', s.sent24h], ['Daily cap / window', s.dailyCap + ' / ' + s.window], ['Audit chain', s.audit && s.audit.ok ? 'intact (' + s.audit.events + ' events)' : 'PROBLEM']]));
         if (s.pauseReason) summary.appendChild(h('p', { class: 'err', text: 'Paused: ' + s.pauseReason }));
+        var sw = h('div', { class: 'row mt' }), swHost = h('div');
+        function doSwitch(body) { return outreach(Object.assign({ action: 'switch' }, body)).then(loadSummary); }
+        if (s.enabled && !s.paused) {
+          var off = h('button', { class: 'btn btn-danger', type: 'button', text: '\u23F9 Turn engine OFF', 'aria-label': 'Turn engine off' });
+          off.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(swHost, { text: 'Turn the sending engine OFF? Nothing more will be sent until you turn it on again.', label: 'Yes, turn OFF', danger: true, run: function () { return doSwitch({ enabled: false }); } }); });
+          sw.appendChild(off);
+        } else {
+          var on = h('button', { class: 'btn btn-ok', type: 'button', text: '\u25B6 Turn engine ON', 'aria-label': 'Turn engine on' });
+          on.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(swHost, { text: 'Turn the sending engine ON? Approved campaigns will start e-mailing real people, up to ' + s.dailyCap + ' a day inside the sending window' + (s.paused ? '. It was auto-paused (' + (s.pauseReason || 'see above') + '): this also clears the pause.' : '.'), label: 'Yes, start sending', typed: 'START', run: function () { return doSwitch(s.paused ? { enabled: true, paused: false } : { enabled: true }); } }); });
+          sw.appendChild(on);
+        }
+        summary.appendChild(sw); summary.appendChild(swHost);
         return s;
       }).catch(function (e) { failure(summary, e); });
     }
 
     // ----- import -----
-    var file = h('input', { type: 'file', accept: '.xlsx,.csv,.txt,.tsv', 'aria-label': 'Contact file' });
+    var file = h('input', { type: 'file', accept: '.xlsx,.xls,.csv,.txt,.tsv', 'aria-label': 'Contact file' });
     var skipRole = h('input', { type: 'checkbox', id: 'skiprole' });
     var attest = h('input', { type: 'checkbox', id: 'attest' });
     var checkBtn = h('button', { class: 'btn btn-light', type: 'button', text: 'Step 1: Check the file (dry run)', disabled: 'disabled' });
@@ -472,7 +484,7 @@
           if (!live) {
             var sv = h('button', { class: 'btn btn-light btn-sm btn-icon', type: 'button', text: '\uD83D\uDCBE', title: 'Save my changes as a new text', 'aria-label': 'Save my changes as a new text' });
             sv.addEventListener('click', function (ev) { if (!ev.isTrusted) return; sv.disabled = true; outreach({ action: 'saveText', subject: subj.value, body: body.value }).then(function () { say('Saved as a new text below. Read it, then approve it.'); return loadCamps(); }).catch(function (e) { say('Not saved: ' + e.message); sv.disabled = false; }); });
-            var a = h('button', { class: 'btn btn-ok btn-sm btn-icon', type: 'button', text: '\u2714', title: 'Approve this text', 'aria-label': 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly this saved text for sending? (If you changed the boxes, save them first.) Nothing is sent until you also switch the engine on in Termux.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); });
+            var a = h('button', { class: 'btn btn-ok btn-sm btn-icon', type: 'button', text: '\u2714', title: 'Approve this text', 'aria-label': 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly this saved text for sending? (If you changed the boxes, save them first.) Nothing is sent until you also switch the engine ON at the top of this page.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); });
             var d = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\uD83D\uDDD1', title: 'Delete this text', 'aria-label': 'Delete this text' }); d.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Delete this unapproved text?', label: 'Yes, delete', danger: true, run: function () { return outreach({ action: 'deleteCampaign', id: c.id }).then(loadCamps); } }); });
             row.appendChild(sv); row.appendChild(a); row.appendChild(d);
           } else { var st = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\u23F9', title: 'Stop this campaign', 'aria-label': 'Stop this campaign' }); st.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Stop this campaign?', label: 'Yes, stop', danger: true, run: function () { return outreach({ action: 'stopCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(st); }

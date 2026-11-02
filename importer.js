@@ -93,11 +93,95 @@
     }
   }
 
+
+  // ----- old .xls (Excel 97-2003 binary): OLE2 container + BIFF records; first worksheet only -----
+  async function* xlsRows(file) {
+    var d = new Uint8Array(await file.arrayBuffer()); if (d.length < 512) throw fail('This .xls file is damaged.');
+    var ss = 1 << u16(d, 0x1E), ms = 1 << u16(d, 0x20), cutoff = u32(d, 0x38), nFat = u32(d, 0x2C), dirStart = u32(d, 0x30), mfStart = u32(d, 0x3C), difStart = u32(d, 0x44), nDif = u32(d, 0x48);
+    function sec(i) { var o = 512 + i * ss; return d.subarray(o, o + ss); }
+    var difat = []; for (var i = 0; i < 109; i++) { var v = u32(d, 0x4C + i * 4); if (v < 0xFFFFFFFA) difat.push(v); }
+    for (var df = difStart, k = 0; df < 0xFFFFFFFA && k < nDif; k++) { var sc = sec(df); for (var j = 0; j < ss / 4 - 1; j++) { var vv = u32(sc, j * 4); if (vv < 0xFFFFFFFA) difat.push(vv); } df = u32(sc, ss - 4); }
+    var fat = []; difat.slice(0, nFat).forEach(function (si) { var sc = sec(si); for (var j = 0; j < ss / 4; j++) fat.push(u32(sc, j * 4)); });
+    function chain(start, table, getter, unit, size) { var out = [], n = 0, cur = start; while (cur < 0xFFFFFFFA && n++ < 5e6) { out.push(getter(cur)); cur = table[cur]; } var tot = out.length * unit, res = new Uint8Array(tot); out.forEach(function (c, ix) { res.set(c, ix * unit); }); return size != null ? res.subarray(0, size) : res; }
+    var dir = chain(dirStart, fat, sec, ss), ents = [];
+    for (var o = 0; o + 128 <= dir.length; o += 128) { var nl = u16(dir, o + 64); if (!nl) continue; var nm = ''; for (var q = 0; q < nl / 2 - 1; q++) nm += String.fromCharCode(u16(dir, o + q * 2)); ents.push({ name: nm, type: dir[o + 66], start: u32(dir, o + 116), size: u32(dir, o + 120) }); }
+    var root = ents.filter(function (e) { return e.type === 5; })[0], wbE = ents.filter(function (e) { return e.type === 2 && (e.name === 'Workbook' || e.name === 'Book'); })[0];
+    if (!wbE) throw fail('This .xls file has no workbook data (it may be password protected). Save it as .xlsx or CSV.');
+    var wbd;
+    if (wbE.size >= cutoff) wbd = chain(wbE.start, fat, sec, ss, wbE.size);
+    else { var mini = chain(root.start, fat, sec, ss, root.size), mfat = [], mfd = chain(mfStart, fat, sec, ss); for (var m = 0; m + 4 <= mfd.length; m += 4) mfat.push(u32(mfd, m)); wbd = chain(wbE.start, mfat, function (i2) { return mini.subarray(i2 * ms, i2 * ms + ms); }, ms, wbE.size); }
+    // BIFF records
+    function rec(pos) { return pos + 4 > wbd.length ? null : { id: u16(wbd, pos), len: u16(wbd, pos + 2), at: pos + 4 }; }
+    var sst = [], sheets = [], pos = 0, r, biff8 = true;
+    var first = rec(0); if (first && first.id === 0x0009) biff8 = false; // BIFF5
+    while ((r = rec(pos))) {
+      if (r.id === 0x002F) throw fail('This .xls file is password protected. Save it without a password as .xlsx or CSV.');
+      if (r.id === 0x00FC) { var segs = [wbd.subarray(r.at, r.at + r.len)], p2 = r.at + r.len, c; while ((c = rec(p2)) && c.id === 0x003C) { segs.push(wbd.subarray(c.at, c.at + c.len)); p2 = c.at + c.len; } sst = readSst(segs); pos = p2; continue; }
+      if (r.id === 0x0085) { sheets.push({ off: u32(wbd, r.at), type: wbd[r.at + 5] }); }
+      if (r.id === 0x000A && pos > 0) break;
+      pos = r.at + r.len;
+    }
+    var ws = sheets.filter(function (x) { return x.type === 0; })[0]; if (!ws) throw fail('No worksheet found in this .xls file.');
+    var rows = new Map(), depth = 0, lastF = null; pos = ws.off;
+    function put(rw, cl, v) { var a = rows.get(rw); if (!a) { a = []; rows.set(rw, a); } while (a.length < cl) a.push(''); a[cl] = v; }
+    while ((r = rec(pos))) {
+      var id = r.id, a0 = r.at;
+      if (id === 0x0809 || id === 0x0009 || id === 0x0209 || id === 0x0409) { depth++; }
+      else if (id === 0x000A) { depth--; if (depth <= 0) break; }
+      else if (depth === 1) {
+        if (id === 0x00FD) put(u16(wbd, a0), u16(wbd, a0 + 2), sst[u32(wbd, a0 + 6)] || '');
+        else if (id === 0x0204 || id === 0x00D6) { var cch = u16(wbd, a0 + 6); put(u16(wbd, a0), u16(wbd, a0 + 2), biff8 ? readStr(wbd, a0 + 8, cch) : latin(wbd, a0 + 8, cch)); }
+        else if (id === 0x0203) put(u16(wbd, a0), u16(wbd, a0 + 2), String(new DataView(wbd.buffer, wbd.byteOffset + a0 + 6, 8).getFloat64(0, true)));
+        else if (id === 0x027E) put(u16(wbd, a0), u16(wbd, a0 + 2), rk(u32(wbd, a0 + 6)));
+        else if (id === 0x00BD) { var rw = u16(wbd, a0), c1 = u16(wbd, a0 + 2), nc = (r.len - 6) / 6; for (var t = 0; t < nc; t++) put(rw, c1 + t, rk(u32(wbd, a0 + 4 + t * 6 + 2))); }
+        else if (id === 0x0006) lastF = { r: u16(wbd, a0), c: u16(wbd, a0 + 2) };
+        else if (id === 0x0207 && lastF) { var cl2 = u16(wbd, a0); put(lastF.r, lastF.c, biff8 ? readStr(wbd, a0 + 2, cl2) : latin(wbd, a0 + 2, cl2)); lastF = null; }
+      }
+      pos = a0 + r.len;
+    }
+    var keys = Array.from(rows.keys()).sort(function (x, y) { return x - y; }); for (var z = 0; z < keys.length; z++) yield rows.get(keys[z]);
+  }
+  function latin(d, o, n) { var s = ''; for (var i = 0; i < n; i++) s += String.fromCharCode(d[o + i]); return s; }
+  function readStr(d, o, cch) { var fl = d[o], utf = fl & 1, rich = fl & 8, ext = fl & 4, p = o + 1; if (rich) p += 2; if (ext) p += 4; var s = ''; for (var i = 0; i < cch; i++) { s += utf ? String.fromCharCode(u16(d, p + i * 2)) : String.fromCharCode(d[p + i]); } return s; }
+  function rk(v) { var n; if (v & 2) n = v >> 2; else { var b = new DataView(new ArrayBuffer(8)); b.setUint32(4, v & 0xFFFFFFFC, true); n = b.getFloat64(0, true); } if (v & 1) n /= 100; return String(n); }
+  function readSst(segs) { // shared-string table; strings may continue into the next record, which then starts with a 1-byte flag
+    var si = 0, sp = 8, out = [], total = u32(segs[0], 4); // skip total + unique counts
+    function cur() { return segs[si]; }
+    function ensure() { while (si < segs.length && sp >= segs[si].length) { si++; sp = 0; return true; } return false; }
+    function b() { if (sp >= cur().length) { si++; sp = 0; } return segs[si][sp++]; }
+    function w() { var lo = b(), hi = b(); return lo | (hi << 8); }
+    function skip(n) { while (n > 0) { if (sp >= cur().length) { si++; sp = 0; if (si >= segs.length) return; } var t = Math.min(n, cur().length - sp); sp += t; n -= t; } }
+    while (si < segs.length && out.length < total) {
+      if (sp >= cur().length) { si++; sp = 0; if (si >= segs.length) break; }
+      var cch = w(), fl = b(), rich = fl & 8, ext = fl & 4, utf = fl & 1, runs = 0, extLen = 0;
+      if (rich) runs = w(); if (ext) { extLen = w() | (w() << 16); }
+      var s = '', left = cch;
+      while (left > 0) {
+        if (sp >= cur().length) { si++; sp = 0; if (si >= segs.length) break; utf = segs[si][sp++] & 1; }
+        var avail = cur().length - sp, unit = utf ? 2 : 1, take = Math.min(left, Math.floor(avail / unit)); if (take <= 0) { if (avail > 0) { sp++; } continue; }
+        for (var i = 0; i < take; i++) { s += utf ? String.fromCharCode(cur()[sp] | (cur()[sp + 1] << 8)) : String.fromCharCode(cur()[sp]); sp += unit; }
+        left -= take;
+      }
+      skip(runs * 4); skip(extLen); out.push(s);
+    }
+    return out;
+  }
+  // ----- HTML / XML "xls" files (many web tools save these with an .xls name) -----
+  function ents(s) { return unent(s.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ')).trim(); }
+  function htmlRows(text) {
+    var out = [], tr = /<tr\b[\s\S]*?<\/tr>/gi, m;
+    while ((m = tr.exec(text))) { var cells = [], td = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi, c; while ((c = td.exec(m[0]))) cells.push(ents(c[1])); if (cells.length) out.push(cells); }
+    if (!out.length) { var row = /<Row\b[\s\S]*?<\/Row>/gi; while ((m = row.exec(text))) { var cs = [], cell = /<Cell\b[^>]*>([\s\S]*?)<\/Cell>/gi, c2; while ((c2 = cell.exec(m[0]))) cs.push(ents(c2[1])); if (cs.length) out.push(cs); } }
+    return out;
+  }
+  async function* markupRows(file) { var rs = htmlRows(await file.text()); for (var i = 0; i < rs.length; i++) yield rs[i]; }
+
   // ----- choose reader, find the e-mail (and name) columns -----
   async function rowsOf(file) {
     var head = await readBytes(file, 0, 8);
     if (head[0] === 0x50 && head[1] === 0x4B) return xlsxRows(file);
-    if (head[0] === 0xD0 && head[1] === 0xCF) throw fail('This is an old .xls file. Open it in Excel and use Save As .xlsx (or CSV), then try again.');
+    if (head[0] === 0xD0 && head[1] === 0xCF) return xlsRows(file);
+    var lead = new TextDecoder().decode(head).replace(/^\uFEFF/, '').trimStart(); if (lead[0] === '<') return markupRows(file);
     return csvRows(file);
   }
   async function* contacts(file, onProgress) {
