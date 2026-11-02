@@ -27,7 +27,7 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
-  var OUT = ['status', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText'];
+  var OUT = ['status', 'importPreview', 'importCommit', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -442,7 +442,7 @@
           var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: short(b.file || b.id, 40) }), h('span', { class: 'chip ' + (b.undone ? 'chip-low' : 'chip-blue'), text: b.undone ? 'undone' : 'added ' + b.added })),
             h('div', { class: 'small muted', text: when(b.at) + ' · ' + b.id + (b.undone ? '' : ' · still waiting: ' + b.waiting) }));
           if (!b.undone && b.waiting > 0) {
-            var u = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Undo: remove those still waiting' });
+            var u = h('button', { class: 'btn btn-light btn-sm btn-icon', type: 'button', text: '\u21A9', title: 'Undo: remove those still waiting', 'aria-label': 'Undo: remove those still waiting' });
             u.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Remove the ' + b.waiting + ' contacts from this import who have not been e-mailed yet? People already e-mailed stay (so they can be kept off future lists).', label: 'Yes, remove', danger: true,
               run: function () { return outreach({ action: 'importUndo', batch: b.id }).then(function () { return Promise.all([loadSummary(), loadBatches()]); }); } }); });
             item.appendChild(h('div', { class: 'row mt' }, u));
@@ -461,12 +461,21 @@
         mk.addEventListener('click', function (ev) { if (!ev.isTrusted) return; mk.disabled = true; outreach({ action: 'createIntro' }).then(loadCamps).catch(function (e) { say('Not done: ' + e.message); mk.disabled = false; }); });
         campBox.appendChild(h('div', { class: 'row' }, mk));
         camps.forEach(function (c) {
-          var det = h('pre', { class: 'small', text: 'Loading…' });
-          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: c.name }), h('span', { class: 'chip ' + (c.active && c.approved ? 'chip-ok' : 'chip-warn'), text: c.active && c.approved ? 'approved, active' : 'not approved' })), det);
-          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s = t.campaign.steps[0]; det.textContent = 'Subject: ' + s.subject + '\n\n' + s.body + '\n\n(Link: ' + t.campaign.link + '; a footer with the postal address and unsubscribe link is added to every e-mail.)'; }).catch(function (e) { det.textContent = e.message; });
+          var live = c.active && c.approved;
+          var subj = h('input', { type: 'text', maxlength: '120', 'aria-label': 'Subject', dir: 'auto', disabled: 'disabled' });
+          var body = h('textarea', { rows: '16', maxlength: '3000', 'aria-label': 'Text', dir: 'auto', class: 'ta', disabled: 'disabled' });
+          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: c.name }), h('span', { class: 'chip ' + (live ? 'chip-ok' : 'chip-warn'), text: live ? 'approved, active' : 'not approved' })),
+            h('label', { text: 'Subject' }), subj, h('label', { text: 'Text (keep {name}, {listingUrl}, {senderName} and {unsubscribeUrl} exactly as written)' }), body,
+            h('p', { class: 'small muted', text: '\uD83D\uDCBE save as new text   \u2714 approve   \uD83D\uDDD1 delete   \u23F9 stop.  A footer with the postal address and unsubscribe link is added to every e-mail. Changing the text makes a NEW copy that you approve separately. An approved text cannot be edited; stop it first.' }));
+          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s0 = t.campaign.steps[0]; subj.value = s0.subject; body.value = s0.body; if (!live) { subj.disabled = false; body.disabled = false; } }).catch(function (e) { body.value = e.message; });
           var row = h('div', { class: 'row mt' });
-          if (!(c.active && c.approved)) { var a = h('button', { class: 'btn btn-ok btn-sm', type: 'button', text: 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly the text above for sending? Nothing is sent until you also switch the engine on in Termux.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(a); }
-          else { var st = h('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Stop this campaign' }); st.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Stop this campaign?', label: 'Yes, stop', danger: true, run: function () { return outreach({ action: 'stopCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(st); }
+          if (!live) {
+            var sv = h('button', { class: 'btn btn-light btn-sm btn-icon', type: 'button', text: '\uD83D\uDCBE', title: 'Save my changes as a new text', 'aria-label': 'Save my changes as a new text' });
+            sv.addEventListener('click', function (ev) { if (!ev.isTrusted) return; sv.disabled = true; outreach({ action: 'saveText', subject: subj.value, body: body.value }).then(function () { say('Saved as a new text below. Read it, then approve it.'); return loadCamps(); }).catch(function (e) { say('Not saved: ' + e.message); sv.disabled = false; }); });
+            var a = h('button', { class: 'btn btn-ok btn-sm btn-icon', type: 'button', text: '\u2714', title: 'Approve this text', 'aria-label': 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly this saved text for sending? (If you changed the boxes, save them first.) Nothing is sent until you also switch the engine on in Termux.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); });
+            var d = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\uD83D\uDDD1', title: 'Delete this text', 'aria-label': 'Delete this text' }); d.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Delete this unapproved text?', label: 'Yes, delete', danger: true, run: function () { return outreach({ action: 'deleteCampaign', id: c.id }).then(loadCamps); } }); });
+            row.appendChild(sv); row.appendChild(a); row.appendChild(d);
+          } else { var st = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\u23F9', title: 'Stop this campaign', 'aria-label': 'Stop this campaign' }); st.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Stop this campaign?', label: 'Yes, stop', danger: true, run: function () { return outreach({ action: 'stopCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(st); }
           item.appendChild(row); campBox.appendChild(item);
         });
       }).catch(function (e) { failure(campBox, e); });

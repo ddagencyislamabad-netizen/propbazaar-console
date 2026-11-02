@@ -61,3 +61,6 @@ input[type=file]{width:100%;margin-top:6px}
 label input[type=checkbox]{width:auto;margin-right:6px;transform:scale(1.2)}
 .panel.mt{margin-top:12px}
 pre.small{white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto}
+textarea.ta,.item input[type=text]{width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:8px;border:1px solid var(--line);border-radius:8px}
+textarea.ta{line-height:1.6}
+.btn-icon{min-width:52px;font-size:20px;line-height:1;padding:8px 14px}
