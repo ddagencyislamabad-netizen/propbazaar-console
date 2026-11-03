@@ -63,7 +63,7 @@
     });
     return { agencies: out, total: els.length, areas: parts.length, answered: answered };
   }
-  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'createIntroDesigned', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -605,19 +605,22 @@
         clear(campBox); var camps = r.status.campaigns.filter(function (c) { return c.audience === 'introduction'; });
         var mk = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: camps.length ? 'Create another copy of the English + Urdu text' : 'Create the English + Urdu introduction text' });
         mk.addEventListener('click', function (ev) { if (!ev.isTrusted) return; mk.disabled = true; outreach({ action: 'createIntro' }).then(loadCamps).catch(function (e) { say('Not done: ' + e.message); mk.disabled = false; }); });
-        campBox.appendChild(h('div', { class: 'row' }, mk));
+        var mkd = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Create the designed e-mail (picture + button, English + Urdu)' });
+        mkd.addEventListener('click', function (ev) { if (!ev.isTrusted) return; mkd.disabled = true; outreach({ action: 'createIntroDesigned' }).then(loadCamps).catch(function (e) { say('Not done: ' + e.message); mkd.disabled = false; }); });
+        campBox.appendChild(h('div', { class: 'row' }, mk)); campBox.appendChild(h('div', { class: 'row mt' }, mkd));
         camps.forEach(function (c) {
           var live = c.active && c.approved;
           var subj = h('input', { type: 'text', maxlength: '120', 'aria-label': 'Subject', dir: 'auto', disabled: 'disabled' });
           var body = h('textarea', { rows: '16', maxlength: '3000', 'aria-label': 'Text', dir: 'auto', class: 'ta', disabled: 'disabled' });
-          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: c.name }), h('span', { class: 'chip ' + (live ? 'chip-ok' : 'chip-warn'), text: live ? 'approved, active' : 'not approved' })),
+          var designed = false, title = h('span', { class: 'row' }, h('strong', { text: c.name }), ' ');
+          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, title, h('span', { class: 'chip ' + (live ? 'chip-ok' : 'chip-warn'), text: live ? 'approved, active' : 'not approved' })),
             h('label', { text: 'Subject' }), subj, h('label', { text: 'Text (keep {name}, {listingUrl}, {senderName} and {unsubscribeUrl} exactly as written)' }), body,
             h('p', { class: 'small muted', text: '\uD83D\uDCBE save as new text   \u2714 approve   \uD83D\uDDD1 delete   \u23F9 stop.  A footer with the postal address and unsubscribe link is added to every e-mail. Changing the text makes a NEW copy that you approve separately. An approved text cannot be edited; stop it first.' }));
-          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s0 = t.campaign.steps[0]; subj.value = s0.subject; body.value = s0.body; if (!live) { subj.disabled = false; body.disabled = false; } }).catch(function (e) { body.value = e.message; });
+          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s0 = t.campaign.steps[0]; designed = !!s0.html; if (designed) title.appendChild(h('span', { class: 'chip chip-blue', text: 'designed e-mail' })); subj.value = s0.subject; body.value = s0.body; if (!live) { subj.disabled = false; body.disabled = false; } }).catch(function (e) { body.value = e.message; });
           var row = h('div', { class: 'row mt' });
           if (!live) {
             var sv = h('button', { class: 'btn btn-light btn-sm btn-icon', type: 'button', text: '\uD83D\uDCBE', title: 'Save my changes as a new text', 'aria-label': 'Save my changes as a new text' });
-            sv.addEventListener('click', function (ev) { if (!ev.isTrusted) return; sv.disabled = true; outreach({ action: 'saveText', subject: subj.value, body: body.value }).then(function () { say('Saved as a new text below. Read it, then approve it.'); return loadCamps(); }).catch(function (e) { say('Not saved: ' + e.message); sv.disabled = false; }); });
+            sv.addEventListener('click', function (ev) { if (!ev.isTrusted) return; sv.disabled = true; outreach({ action: 'saveText', subject: subj.value, body: body.value, designed: designed }).then(function () { say('Saved as a new text below. Read it, then approve it.'); return loadCamps(); }).catch(function (e) { say('Not saved: ' + e.message); sv.disabled = false; }); });
             var a = h('button', { class: 'btn btn-ok btn-sm btn-icon', type: 'button', text: '\u2714', title: 'Approve this text', 'aria-label': 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly this saved text for sending? (If you changed the boxes, save them first.) Nothing is sent until you also switch the engine ON at the top of this page.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); });
             var d = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\uD83D\uDDD1', title: 'Delete this text', 'aria-label': 'Delete this text' }); d.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Delete this unapproved text?', label: 'Yes, delete', danger: true, run: function () { return outreach({ action: 'deleteCampaign', id: c.id }).then(loadCamps); } }); });
             row.appendChild(sv); row.appendChild(a); row.appendChild(d);
