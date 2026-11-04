@@ -63,7 +63,7 @@
     });
     return { agencies: out, total: els.length, areas: parts.length, answered: answered };
   }
-  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'createIntroDesigned', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'createIntroDesigned', 'sendTest', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -75,7 +75,7 @@
         return j;
       }); });
   }
-  function friendly(c) { return ({ ATTESTATION_REQUIRED: 'Tick the confirmation box first.', CHUNK_TOO_LARGE: 'Internal: chunk too large.', BAD_BATCH: 'Bad batch id.', CLAIM_WORD: 'Text contains a blocked claim word.', UNSUB_MISSING: 'Text needs the unsubscribe link.', NOT_FOUND: 'Not found.' })[c] || c; }
+  function friendly(c) { return ({ BAD_EMAIL: 'That e-mail address does not look right.', TEST_LIMIT: 'Five tests have been sent today. Try again tomorrow.', ATTESTATION_REQUIRED: 'Tick the confirmation box first.', CHUNK_TOO_LARGE: 'Internal: chunk too large.', BAD_BATCH: 'Bad batch id.', CLAIM_WORD: 'Text contains a blocked claim word.', UNSUB_MISSING: 'Text needs the unsubscribe link.', NOT_FOUND: 'Not found.' })[c] || c; }
 
   // ---------- session (access token in memory; refresh token in sessionStorage, gone when the tab closes) ----------
   var S = null;                 // { access, refresh, email }
@@ -625,6 +625,11 @@
             var d = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\uD83D\uDDD1', title: 'Delete this text', 'aria-label': 'Delete this text' }); d.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Delete this unapproved text?', label: 'Yes, delete', danger: true, run: function () { return outreach({ action: 'deleteCampaign', id: c.id }).then(loadCamps); } }); });
             row.appendChild(sv); row.appendChild(a); row.appendChild(d);
           } else { var st = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\u23F9', title: 'Stop this campaign', 'aria-label': 'Stop this campaign' }); st.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Stop this campaign?', label: 'Yes, stop', danger: true, run: function () { return outreach({ action: 'stopCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(st); }
+          var tTo = h('input', { type: 'email', maxlength: '254', placeholder: 'your e-mail address', 'aria-label': 'Send a test to this address', autocomplete: 'email', inputmode: 'email' });
+          var tBtn = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: '\u2709 Send me a test' });
+          tBtn.addEventListener('click', function (ev) { if (!ev.isTrusted) return; var to = String(tTo.value || '').trim(); if (!to) { say('Type your own e-mail address first.'); return; }
+            confirmPanel(item, { text: 'Send ONE test e-mail of this text to ' + to + '? It goes to no one else, does not use the daily cap and does not start anything.', label: 'Yes, send the test', run: function () { return outreach({ action: 'sendTest', id: c.id, to: to }).then(function () { say('Test sent to ' + to + '. Check the inbox and the spam folder in a minute.'); }); } }); });
+          item.appendChild(h('div', { class: 'row mt' }, h('label', { text: 'Test e-mail (to yourself only)' }))); item.appendChild(h('div', { class: 'row' }, tTo, tBtn));
           item.appendChild(row); campBox.appendChild(item);
         });
       }).catch(function (e) { failure(campBox, e); });
