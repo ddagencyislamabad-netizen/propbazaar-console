@@ -5,8 +5,16 @@
   var KEY = 'pb_mkt_v1', MAXCAP = 50;
   var DEF_EN = 'Assalam o Alaikum {name}, I am Zafar from PropBazaar.pk, a free platform where property agents list properties and get buyer enquiries. Would you like details? Reply STOP and I will not message you again.';
   var DEF_UR = 'السلام علیکم {name}، میں ظفر علی، PropBazaar.pk سے ہوں۔ یہ پراپرٹی ایجنٹس کے لیے مفت پلیٹ فارم ہے جہاں آپ پراپرٹی لسٹ کر کے خریداروں کی انکوائری حاصل کر سکتے ہیں۔ تفصیل چاہیے؟ پیغام بند کرنے کے لیے STOP لکھیں۔';
-  function load() { try { var d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && d.contacts) return d; } catch (e) {} return { contacts: [], cap: 50, lang: 'ur', en: DEF_EN, ur: DEF_UR, channel: '', day: '', sentToday: 0 }; }
-  function save(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); return true; } catch (e) { return false; } }
+  var STORE = { where: 'this browser', ok: true, last: '' };
+  function idb(mode, fn) { return new Promise(function (res) { try { var q = indexedDB.open('pb_marketing', 1); q.onupgradeneeded = function () { q.result.createObjectStore('kv'); }; q.onerror = function () { res(null); }; q.onsuccess = function () { try { var tx = q.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = function () { res(r && 'result' in r ? r.result : true); q.result.close(); }; tx.onerror = tx.onabort = function () { res(null); }; } catch (e) { res(null); } }; } catch (e) { res(null); } }); }
+  function load() { try { var d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && d.contacts) return d; } catch (e) {} return { contacts: [], cap: 50, lang: 'ur', en: DEF_EN, ur: DEF_UR, channel: '', day: '', sentToday: 0, ts: 0 }; }
+  function loadIdb() { return idb('readonly', function (st) { return st.get(KEY); }); }
+  function save(d) {
+    d.ts = Date.now(); var ok = false;
+    try { localStorage.setItem(KEY, JSON.stringify(d)); ok = true; } catch (e) { ok = false; }
+    idb('readwrite', function (st) { return st.put(JSON.parse(JSON.stringify(d)), KEY); }).then(function (r) { if (r !== null) { ok = true; } STORE.ok = ok; STORE.last = new Date().toLocaleTimeString(); });
+    STORE.ok = ok; return ok;
+  }
   function today() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()); }
   function norm(raw) { // -> international digits or ''
     var s = String(raw || '').trim(), plus = /^\+/.test(s) || /^00/.test(s), d = s.replace(/\D/g, '');
@@ -45,11 +53,12 @@
   }
   function msgFor(d, c) { var t = d[d.lang] || ''; var nm = c.n ? c.n.split(/\s+/)[0] : (d.lang === 'ur' ? 'صاحب' : 'Sir/Madam'); t = t.replace(/\{name\}/g, nm); if (d.channel) t += (d.lang === 'ur' ? '\nمفت اپڈیٹس: ' : '\nFree updates: ') + d.channel; return t; }
   function count(d, s) { return d.contacts.filter(function (c) { return c.s === s; }).length; }
-  function rollDay(d) { var t = today(); if (d.day !== t) { d.day = t; d.sentToday = 0; save(d); } }
+  function rollDay(d) { var t = today(); if (d.day !== t) { d.day = t; d.sentToday = 0; if (d.contacts.length) save(d); } }
 
   window.PBMarketing = function (pages, h, clear) {
     pages.marketing = function (el) {
       var d = load(); rollDay(d);
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
       function render() {
         clear(el); rollDay(d);
         var left = Math.max(0, d.cap - d.sentToday), waiting = count(d, 'new');
@@ -141,9 +150,11 @@
         var wipe = h('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Delete all contacts from this phone' });
         wipe.addEventListener('click', function () { if (wipe.getAttribute('data-arm') !== '1') { wipe.setAttribute('data-arm', '1'); wipe.textContent = 'Tap again to confirm delete'; return; } d.contacts = []; d.sentToday = 0; save(d); render(); });
         bk.appendChild(h('div', { class: 'row' }, dl, wipe)); el.appendChild(bk);
-        if (!save(d)) el.insertBefore(h('p', { class: 'err', text: 'This browser would not save data (private mode?). Contacts will be lost when you close the page.' }), el.children[1]);
+        var kept = h('p', { class: 'small muted', text: 'Saved on this phone: ' + d.contacts.length + ' contacts. Download a backup now and then.' }); bk.appendChild(kept);
+        if (!STORE.ok) el.insertBefore(h('p', { class: 'err', text: 'This browser would not save data (private mode?). Contacts will be lost when you close the page.' }), el.children[1]);
       }
       render();
+      loadIdb().then(function (r) { if (r && r.contacts && (r.contacts.length > d.contacts.length || (r.ts || 0) > (d.ts || 0) && d.contacts.length === 0)) { Object.keys(r).forEach(function (k) { d[k] = r[k]; }); rollDay(d); render(); } });
     };
   };
 })();
