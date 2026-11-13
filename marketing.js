@@ -18,15 +18,16 @@
     return '';
   }
   function splitLine(l) { var out = [], cur = '', q = false; for (var i = 0; i < l.length; i++) { var c = l[i]; if (c === '"') { if (q && l[i + 1] === '"') { cur += '"'; i++; } else q = !q; } else if ((c === ',' || c === ';' || c === '\t') && !q) { out.push(cur); cur = ''; } else cur += c; } out.push(cur); return out.map(function (x) { return x.trim(); }); }
-  function parse(text, d) {
-    var lines = String(text || '').split(/\r?\n/).filter(function (l) { return l.trim(); }), res = { added: 0, dup: 0, bad: 0 };
-    if (!lines.length) return res;
-    var head = splitLine(lines[0]).map(function (x) { return x.toLowerCase(); }), ni = -1, pi = -1, hasHead = false;
-    head.forEach(function (x, i) { if (/name/.test(x) && ni < 0) ni = i; if (/(phone|mobile|whats|number|cell|contact)/.test(x) && pi < 0) pi = i; });
-    if (pi >= 0) { hasHead = true; lines.shift(); }
+  function parseRows(rows, d) {
+    var res = { added: 0, dup: 0, bad: 0 }, rs = rows.filter(function (r) { return r.some(function (c) { return String(c).trim(); }); });
+    if (!rs.length) return res;
+    var head = rs[0].map(function (x) { return String(x).toLowerCase(); }), ni = -1, pi = -1;
+    head.forEach(function (x, i) { if (/name/.test(x) && !/(company|agency|office|father)/.test(x) && ni < 0) ni = i; if (/(phone|mobile|whats|number|cell|contact|mob)/.test(x) && !/name/.test(x) && pi < 0) pi = i; });
+    var hasHead = pi >= 0; if (hasHead) rs.shift();
     var seen = {}; d.contacts.forEach(function (c) { seen[c.p] = 1; });
-    lines.forEach(function (l) {
-      var f = splitLine(l), p = '', n = '';
+    rs.forEach(function (f) {
+      f = f.map(function (x) { return x == null ? '' : String(x).trim(); });
+      var p = '', n = '';
       if (hasHead) { p = norm(f[pi]); n = ni >= 0 ? f[ni] : ''; }
       else { f.forEach(function (x) { if (!p) { var t = norm(x); if (t) p = t; else if (!n && /[^\d+\s-]/.test(x)) n = x; } }); }
       if (!p) { res.bad++; return; }
@@ -34,6 +35,13 @@
       seen[p] = 1; d.contacts.push({ p: p, n: (n || '').slice(0, 60), s: 'new', t: '' }); res.added++;
     });
     return res;
+  }
+  function parse(text, d) { return parseRows(String(text || '').split(/\r?\n/).filter(function (l) { return l.trim(); }).map(splitLine), d); }
+  async function parseFile(file, d) {
+    if (!window.PBImport || !window.PBImport.rows || /\.(csv|txt)$/i.test(file.name)) return parse(await file.text(), d);
+    var it = (await window.PBImport.rows(file))[Symbol.asyncIterator](), rows = [], r;
+    while (!(r = await it.next()).done) { rows.push(r.value); if (rows.length > 20000) break; }
+    return parseRows(rows, d);
   }
   function msgFor(d, c) { var t = d[d.lang] || ''; var nm = c.n ? c.n.split(/\s+/)[0] : (d.lang === 'ur' ? 'صاحب' : 'Sir/Madam'); t = t.replace(/\{name\}/g, nm); if (d.channel) t += (d.lang === 'ur' ? '\nمفت اپڈیٹس: ' : '\nFree updates: ') + d.channel; return t; }
   function count(d, s) { return d.contacts.filter(function (c) { return c.s === s; }).length; }
@@ -83,11 +91,12 @@
         // --- import ---
         var im = h('div', { class: 'card' });
         im.appendChild(h('h2', { text: 'Add contacts' }));
-        im.appendChild(h('p', { class: 'small muted', text: 'Paste one per line (name, number) or choose a CSV file with a "Name" and "Phone" column. Pakistani numbers like 0300… are fixed automatically. Duplicates are skipped. Contacts stay on this phone only. For an Excel file, save it as CSV first.' }));
-        var ta = h('textarea', { rows: '5', placeholder: 'Ali Khan, 0300 1234567', 'aria-label': 'Contacts' }), file = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain' }), out = h('p', { class: 'small' });
-        function doImport(text) { var r = parse(text, d); save(d); out.textContent = 'Added ' + r.added + ', already had ' + r.dup + ', not a valid number ' + r.bad + '.'; var s = el.querySelector('.card h2'); if (s) { /* refresh counts */ } setTimeout(render, 900); }
+        im.appendChild(h('p', { class: 'small muted', text: 'Paste one per line (name, number) or choose a CSV file with a "Name" and "Phone" column. Pakistani numbers like 0300… are fixed automatically. Duplicates are skipped. Contacts stay on this phone only. Excel files (.xls, .xlsx) work too.' }));
+        var ta = h('textarea', { rows: '5', placeholder: 'Ali Khan, 0300 1234567', 'aria-label': 'Contacts' }), file = h('input', { type: 'file', accept: '.xls,.xlsx,.csv,.txt,text/csv,text/plain' }), out = h('p', { class: 'small' });
+        function showRes(r) { save(d); out.textContent = 'Added ' + r.added + ', already had ' + r.dup + ', not a valid number ' + r.bad + '.'; var s = el.querySelector('.card h2'); if (s) { /* refresh counts */ } setTimeout(render, 900); }
+        function doImport(text) { showRes(parse(text, d)); }
         var go = h('button', { class: 'btn btn-sm', type: 'button', text: 'Add pasted contacts' }); go.addEventListener('click', function () { doImport(ta.value); });
-        file.addEventListener('change', function () { var f = file.files && file.files[0]; if (!f) return; f.text().then(doImport); });
+        file.addEventListener('change', function () { var f = file.files && file.files[0]; if (!f) return; out.textContent = 'Reading file…'; parseFile(f, d).then(showRes).catch(function (e) { out.textContent = 'Could not read this file: ' + (e && e.message || e) + '. Try saving it as CSV.'; }); });
         im.appendChild(ta); im.appendChild(h('div', { class: 'row mt' }, go)); im.appendChild(file); im.appendChild(out);
         el.appendChild(im);
 

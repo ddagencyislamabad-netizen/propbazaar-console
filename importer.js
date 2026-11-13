@@ -197,6 +197,6 @@
     while (!done) { var n = await it.next(); if (n.done) break; var rw = n.value; if (!rw.some(function (c) { return String(c).trim() !== ''; })) continue; yield toContact(rw); }
     if (onProgress) onProgress(total);
   }
-  var api = { contacts: contacts };
+  var api = { contacts: contacts, rows: rowsOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.PBImport = api;
 })(typeof window !== 'undefined' ? window : globalThis);
