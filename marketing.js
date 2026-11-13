@@ -3,8 +3,8 @@
 (function () {
   'use strict';
   var KEY = 'pb_mkt_v1', MAXCAP = 50;
-  var DEF_EN = 'Assalam o Alaikum {name}, I am Zafar from PropBazaar.pk, a free platform where property agents list properties and get buyer enquiries. Would you like details? Reply STOP and I will not message you again.';
-  var DEF_UR = 'السلام علیکم {name}، میں ظفر علی، PropBazaar.pk سے ہوں۔ یہ پراپرٹی ایجنٹس کے لیے مفت پلیٹ فارم ہے جہاں آپ پراپرٹی لسٹ کر کے خریداروں کی انکوائری حاصل کر سکتے ہیں۔ تفصیل چاہیے؟ پیغام بند کرنے کے لیے STOP لکھیں۔';
+  var DEF_EN = 'Assalam o Alaikum {name} ✨\n\nI am Zafar Ali from *PropBazaar.pk*, a modern property marketplace based in Islamabad.\n\n🏡 List your properties with a refined, professional presentation\n🌍 Reach buyers in Pakistan and overseas\n🤝 Receive enquiries directly\n\nMay I share more details?\n\n_Reply STOP and I will not message you again._';
+  var DEF_UR = 'السلام علیکم {name} ✨\n\nمیں ظفر علی، اسلام آباد سے *PropBazaar.pk* کی طرف سے آپ سے مخاطب ہوں، پاکستان کا جدید پراپرٹی مارکیٹ پلیس۔\n\n🏡 اپنی پراپرٹیز کو شاندار اور پیشہ ورانہ انداز میں لسٹ کریں\n🌍 پاکستان اور بیرونِ ملک خریداروں تک رسائی حاصل کریں\n🤝 انکوائری براہِ راست آپ تک پہنچے\n\nکیا میں مزید تفصیل شیئر کر سکتا ہوں؟\n\n_پیغام بند کروانے کے لیے STOP لکھیں۔_';
   var STORE = { where: 'this browser', ok: true, last: '' };
   function idb(mode, fn) { return new Promise(function (res) { try { var q = indexedDB.open('pb_marketing', 1); q.onupgradeneeded = function () { q.result.createObjectStore('kv'); }; q.onerror = function () { res(null); }; q.onsuccess = function () { try { var tx = q.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = function () { res(r && 'result' in r ? r.result : true); q.result.close(); }; tx.onerror = tx.onabort = function () { res(null); }; } catch (e) { res(null); } }; } catch (e) { res(null); } }); }
   function load() { try { var d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && d.contacts) return d; } catch (e) {} return { contacts: [], cap: 50, lang: 'ur', en: DEF_EN, ur: DEF_UR, channel: '', day: '', sentToday: 0, ts: 0 }; }
