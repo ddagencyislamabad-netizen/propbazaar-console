@@ -27,33 +27,23 @@
   }
 
   // ---------- outreach: ONE fixed address, a fixed list of actions, owner login token only ----------
-  var BOX = { Islamabad: [33.45, 72.80, 33.85, 73.30], Rawalpindi: [33.45, 72.90, 33.80, 73.20], Lahore: [31.30, 74.15, 31.70, 74.55], Karachi: [24.75, 66.85, 25.20, 67.40], Peshawar: [33.90, 71.40, 34.10, 71.65], Faisalabad: [31.30, 72.95, 31.55, 73.25], Multan: [30.10, 71.35, 30.30, 71.60], Quetta: [30.10, 66.90, 30.30, 67.10], Gujranwala: [32.10, 74.10, 32.25, 74.25], Sialkot: [32.45, 74.45, 32.60, 74.60], Hyderabad: [25.30, 68.30, 25.50, 68.45],
-    Dubai: [24.95, 54.95, 25.35, 55.55], 'Abu Dhabi': [24.30, 54.30, 24.55, 54.70], Sharjah: [25.28, 55.35, 25.40, 55.55], Doha: [25.20, 51.40, 25.45, 51.60], Riyadh: [24.50, 46.50, 24.95, 46.95], Jeddah: [21.35, 39.10, 21.75, 39.30], Dammam: [26.35, 49.95, 26.55, 50.20],
-    London: [51.40, -0.40, 51.60, 0.10], Birmingham: [52.40, -2.05, 52.55, -1.80], Manchester: [53.40, -2.35, 53.55, -2.15], Bradford: [53.75, -1.85, 53.85, -1.70] };
-  var COUNTRIES = [['Pakistan', ['Islamabad', 'Rawalpindi', 'Lahore', 'Karachi', 'Peshawar', 'Faisalabad', 'Multan', 'Quetta', 'Gujranwala', 'Sialkot', 'Hyderabad']], ['UAE', ['Dubai', 'Abu Dhabi', 'Sharjah']], ['Qatar', ['Doha']], ['Saudi Arabia', ['Riyadh', 'Jeddah', 'Dammam']], ['UK', ['London', 'Birmingham', 'Manchester', 'Bradford']]];
-  function countryOf(city) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][1].indexOf(city) !== -1) return COUNTRIES[i][0]; return ''; }
-  // big cities are searched in 4 smaller map areas (lighter for the free servers, and the 800-result cap is not hit); a city counts as answered if at least one area answers
-  function tiles(b) { if ((b[2] - b[0]) * (b[3] - b[1]) <= 0.05) return [b]; var m1 = (b[0] + b[2]) / 2, m2 = (b[1] + b[3]) / 2; return [[b[0], b[1], m1, m2], [b[0], m2, m1, b[3]], [m1, b[1], b[2], m2], [m1, m2, b[2], b[3]]]; }
+  var BOX = { Islamabad: [33.45, 72.80, 33.85, 73.30], Rawalpindi: [33.45, 72.90, 33.80, 73.20], Lahore: [31.30, 74.15, 31.70, 74.55], Karachi: [24.75, 66.85, 25.20, 67.40], Peshawar: [33.90, 71.40, 34.10, 71.65], Faisalabad: [31.30, 72.95, 31.55, 73.25], Multan: [30.10, 71.35, 30.30, 71.60], Quetta: [30.10, 66.90, 30.30, 67.10], Gujranwala: [32.10, 74.10, 32.25, 74.25], Sialkot: [32.45, 74.45, 32.60, 74.60], Hyderabad: [25.30, 68.30, 25.50, 68.45] };
   // The map lookup runs in THIS browser (your phone's own connection): the public map servers refuse requests from cloud servers. Public business data only; the agencies' own sites are still read by the server, which obeys robots.txt.
   async function mapLookup(city) {
     if (!BOX[city]) throw new Error('unknown city');
+    var q = '[out:json][timeout:25];nwr["office"="estate_agent"](' + BOX[city].join(',') + ');out tags 800;', tried = [], j = null;
     var EP = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.openstreetmap.fr/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-    var parts = tiles(BOX[city]), els = [], answered = 0, tried = [];
-    for (var pi = 0; pi < parts.length; pi++) {
-      var q = '[out:json][timeout:25];nwr["office"="estate_agent"](' + parts[pi].join(',') + ');out tags 800;', j = null, why = [];
-      // the free map servers are often busy (502/503/504/429): go round the list up to 3 times, with a short pause between rounds
-      for (var round = 0; round < 3 && !j; round++) {
-        if (round) await new Promise(function (r) { setTimeout(r, 5000); });
-        for (var i = 0; i < EP.length && !j; i++) {
-          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 20000);
-          try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 2) why.push(host + ': HTTP ' + r.status); }
-          catch (e) { if (round === 2) why.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
-        }
+    // the free map servers are often busy (502/503/504/429): go round the list up to 3 times, with a short pause between rounds
+    for (var round = 0; round < 3 && !j; round++) {
+      if (round) await new Promise(function (r) { setTimeout(r, 5000); });
+      for (var i = 0; i < EP.length && !j; i++) {
+        var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 20000);
+        try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 2) tried.push(host + ': HTTP ' + r.status); }
+        catch (e) { if (round === 2) tried.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
       }
-      if (j) { answered++; els = els.concat(j.elements || []); } else if (!tried.length) tried = why;
     }
-    if (!answered) throw new Error(tried.join('; '));
-    var seen = {}, out = [];
+    if (!j) throw new Error(tried.join('; '));
+    var els = j.elements || [], seen = {}, out = [];
     els.forEach(function (el) {
       var t = el.tags || {}, site = String(t.website || t['contact:website'] || t.url || '').slice(0, 300), mail = String(t.email || t['contact:email'] || '').split(/[;,\s]+/)[0].toLowerCase().slice(0, 120);
       if (!/^https?:\/\//i.test(site)) site = site ? 'https://' + site : '';
@@ -61,9 +51,9 @@
       var key = (site ? site.replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase() : '') || mail; if (seen[key]) return; seen[key] = 1;
       out.push({ name: String(t.name || t['name:en'] || key).slice(0, 80), website: site, email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail) ? mail : '', city: city });
     });
-    return { agencies: out, total: els.length, areas: parts.length, answered: answered };
+    return { agencies: out, total: els.length };
   }
-  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'createIntroDesigned', 'sendTest', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
+  var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
     if (!body || OUT.indexOf(body.action) === -1) return Promise.reject(new Error('blocked: outreach action'));
@@ -75,7 +65,7 @@
         return j;
       }); });
   }
-  function friendly(c) { return ({ BAD_EMAIL: 'That e-mail address does not look right.', TEST_LIMIT: 'Five tests have been sent today. Try again tomorrow.', ATTESTATION_REQUIRED: 'Tick the confirmation box first.', CHUNK_TOO_LARGE: 'Internal: chunk too large.', BAD_BATCH: 'Bad batch id.', CLAIM_WORD: 'Text contains a blocked claim word.', UNSUB_MISSING: 'Text needs the unsubscribe link.', NOT_FOUND: 'Not found.' })[c] || c; }
+  function friendly(c) { return ({ ATTESTATION_REQUIRED: 'Tick the confirmation box first.', CHUNK_TOO_LARGE: 'Internal: chunk too large.', BAD_BATCH: 'Bad batch id.', CLAIM_WORD: 'Text contains a blocked claim word.', UNSUB_MISSING: 'Text needs the unsubscribe link.', NOT_FOUND: 'Not found.' })[c] || c; }
 
   // ---------- session (access token in memory; refresh token in sessionStorage, gone when the tab closes) ----------
   var S = null;                 // { access, refresh, email }
@@ -232,6 +222,7 @@
 
   // ---------- pages ----------
   var pages = {};
+  if (window.PBMarketing) window.PBMarketing(pages, h, clear);
 
   pages.audit = function (el) {
     var verifyBox = h('div', { class: 'card' }), listBox = h('div'), more = h('button', { class: 'btn btn-light', type: 'button', text: 'Load older' });
@@ -488,15 +479,9 @@
 
     // ----- agent finder: public listings + each agency's own published business e-mail; you review, then import -----
     (function finder() {
-      var CITY_LIST = [].concat.apply([], COUNTRIES.map(function (c) { return c[1]; })), FREE = /@(gmail|yahoo|hotmail|outlook|live|icloud|ymail)\./i, ROLEX = /^(info|admin|sales|contact|office|support|hello|enquiries|inquiries|marketing|accounts|noreply|no-reply|webmaster|mail|team)@/i;
+      var CITY_LIST = ['Islamabad', 'Rawalpindi', 'Lahore', 'Karachi', 'Peshawar', 'Faisalabad', 'Multan', 'Quetta', 'Gujranwala', 'Sialkot', 'Hyderabad'], FREE = /@(gmail|yahoo|hotmail|outlook|live|icloud|ymail)\./i, ROLEX = /^(info|admin|sales|contact|office|support|hello|enquiries|inquiries|marketing|accounts|noreply|no-reply|webmaster|mail|team)@/i;
       var boxes = {}, running = false, stop = false, found = new Map(), picks = new Map(), attest2 = h('input', { type: 'checkbox', id: 'attest2' });
-      var cityRow = h('div', { class: 'mt' });
-      COUNTRIES.forEach(function (co) {
-        var all = h('input', { type: 'checkbox', 'aria-label': 'All cities in ' + co[0] }), row = h('div', { class: 'row' });
-        co[1].forEach(function (c) { var b = h('input', { type: 'checkbox', 'aria-label': 'City ' + c }); if (c === 'Islamabad' || c === 'Rawalpindi') b.checked = true; boxes[c] = b; row.appendChild(h('label', { class: 'small' }, b, ' ' + c + '  ')); });
-        all.addEventListener('change', function () { co[1].forEach(function (c) { boxes[c].checked = all.checked; }); });
-        cityRow.appendChild(h('div', { class: 'mt' }, h('label', { class: 'small strong' }, all, ' ' + co[0] + (co[0] === 'Pakistan' ? '' : ' (Pakistanis living abroad)') + ' · select all'), row));
-      });
+      var cityRow = h('div', { class: 'row mt' }); CITY_LIST.forEach(function (c) { var b = h('input', { type: 'checkbox', 'aria-label': 'City ' + c }); if (c === 'Islamabad' || c === 'Rawalpindi') b.checked = true; boxes[c] = b; cityRow.appendChild(h('label', { class: 'small' }, b, ' ' + c + '  ')); });
       var go = h('button', { class: 'btn btn-ok', type: 'button', text: '🔎 Find agents', 'aria-label': 'Find agents' }), halt = h('button', { class: 'btn btn-light', type: 'button', text: '⏹ Stop', 'aria-label': 'Stop searching', hidden: 'hidden' });
       var prog = h('p', { class: 'small muted' }), list = h('div'), outcome = h('div');
       findBox.appendChild(h('p', { class: 'small', text: 'Looks up real-estate agencies in the cities you tick from public map listings, then reads each agency\'s own website for the business e-mail it publishes. It obeys each site\'s robots.txt, reads at most 3 pages per site and never signs in anywhere. Nothing is saved or sent here: you review the list, untick anything you do not want, and only then import it.' }));
@@ -511,7 +496,7 @@
         rows.slice(0, 3000).forEach(function (r) {
           var free = FREE.test(r.email), role = ROLEX.test(r.email); if (!picks.has(r.email)) picks.set(r.email, r.own && !free && !role);
           var cb = h('input', { type: 'checkbox', 'aria-label': 'Select ' + r.email }); cb.checked = picks.get(r.email); cb.addEventListener('change', function () { picks.set(r.email, cb.checked); refresh(); });
-          var tags = [r.city + (countryOf(r.city) && countryOf(r.city) !== 'Pakistan' ? ' (' + countryOf(r.city) + ')' : ''), r.own ? 'own website address' : 'not on agency domain', free ? 'Gmail/Yahoo style' : '', role ? 'general address' : ''].filter(Boolean).join(' · ');
+          var tags = [r.city, r.own ? 'own website address' : 'not on agency domain', free ? 'Gmail/Yahoo style' : '', role ? 'general address' : ''].filter(Boolean).join(' · ');
           var line = h('div', { class: 'small' }, h('label', null, cb, ' ', h('strong', { text: r.email }), ' ', r.name ? '(' + r.name + ')' : ''), ' '); if (/^https?:\/\//.test(r.source)) line.appendChild(h('a', { href: r.source, target: '_blank', rel: 'noopener noreferrer', text: '[source]' })); line.appendChild(h('div', { class: 'muted', text: tags })); list.appendChild(line);
         });
         if (rows.length > 3000) list.appendChild(h('p', { class: 'muted small', text: 'Showing the first 3000. Run the search again later for more.' }));
@@ -519,9 +504,9 @@
         list.appendChild(h('div', { class: 'panel mt' }, h('label', { class: 'strong' }, attest2, ' I have looked at this list. These are business e-mail addresses that agents or agencies publish themselves, and I may send each of them one introduction with an unsubscribe link.'), h('div', { class: 'row mt' }, goImp)));
         attest2.addEventListener('change', refresh); refresh();
         goImp.addEventListener('click', function (ev) {
-          if (!ev.isTrusted || running || !attest2.checked) return; var sel = rows.filter(function (r) { return picks.get(r.email); }).map(function (r) { return { email: r.email, name: r.name, country: countryOf(r.city) }; }); if (!sel.length) return;
+          if (!ev.isTrusted || running || !attest2.checked) return; var sel = rows.filter(function (r) { return picks.get(r.email); }).map(function (r) { return { email: r.email, name: r.name }; }); if (!sel.length) return;
           var batch = 'find-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), tot = { received: 0, new: 0, alreadyKnown: 0, suppressed: 0 }; running = true; goImp.disabled = true; prog.textContent = 'Importing…';
-          (async function () { for (var i = 0; i < sel.length; i += 500) { var r = await outreach({ action: 'importCommit', batch: batch, fileName: 'Agent finder: ' + Array.from(new Set(sel.map(function (x) { return x.country; }).filter(Boolean))).join(', '), rows: sel.slice(i, i + 500).map(function (x) { return { email: x.email, name: x.name }; }), attested: true, skipRole: false }); ['received', 'new', 'alreadyKnown', 'suppressed'].forEach(function (k) { tot[k] += r.counts[k] || 0; }); } })()
+          (async function () { for (var i = 0; i < sel.length; i += 500) { var r = await outreach({ action: 'importCommit', batch: batch, fileName: 'Agent finder', rows: sel.slice(i, i + 500), attested: true, skipRole: false }); ['received', 'new', 'alreadyKnown', 'suppressed'].forEach(function (k) { tot[k] += r.counts[k] || 0; }); } })()
             .then(function () { prog.textContent = 'Done.'; clear(outcome); outcome.appendChild(h('p', { class: 'strong', text: 'Imported (batch ' + batch + '): ' + tot.new + ' new, ' + tot.alreadyKnown + ' already known, ' + tot.suppressed + ' blocked before.' })); found.clear(); picks.clear(); attest2.checked = false; clear(list); return Promise.all([loadSummary(), loadBatches()]); })
             .catch(function (e) { prog.textContent = ''; outcome.appendChild(h('p', { class: 'err', text: 'Stopped: ' + e.message + '. People already added are skipped if you import again.' })); }).then(function () { running = false; refresh(); });
         });
@@ -532,7 +517,7 @@
         (async function () {
           for (var ci = 0; ci < cities.length && !stop; ci++) {
             var city = cities[ci], agencies; prog.textContent = city + ': looking up agencies…';
-            var before = found.size; try { var la = await mapLookup(city); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + ' agencies on the map, ' + agencies.length + ' with a website or e-mail' + (la.answered < la.areas ? ' (only ' + la.answered + ' of ' + la.areas + ' map areas answered: run this city again later for the rest)' : '')); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
+            var before = found.size; try { var la = await mapLookup(city); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + ' agencies on the map, ' + agencies.length + ' with a website or e-mail'); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
             for (var i = 0; i < agencies.length && !stop; i += 6) {
               prog.textContent = city + ': read ' + Math.min(i, agencies.length) + ' of ' + agencies.length + ' agencies · ' + found.size + ' addresses found so far';
               try { var r = await outreach({ action: 'findCrawl', sites: agencies.slice(i, i + 6) }); (r.results || []).forEach(function (x) { add(x, city); }); } catch (e) { /* skip this group, carry on */ }
@@ -605,31 +590,23 @@
         clear(campBox); var camps = r.status.campaigns.filter(function (c) { return c.audience === 'introduction'; });
         var mk = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: camps.length ? 'Create another copy of the English + Urdu text' : 'Create the English + Urdu introduction text' });
         mk.addEventListener('click', function (ev) { if (!ev.isTrusted) return; mk.disabled = true; outreach({ action: 'createIntro' }).then(loadCamps).catch(function (e) { say('Not done: ' + e.message); mk.disabled = false; }); });
-        var mkd = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: 'Create the designed e-mail (picture + button, English + Urdu)' });
-        mkd.addEventListener('click', function (ev) { if (!ev.isTrusted) return; mkd.disabled = true; outreach({ action: 'createIntroDesigned' }).then(loadCamps).catch(function (e) { say('Not done: ' + e.message); mkd.disabled = false; }); });
-        campBox.appendChild(h('div', { class: 'row' }, mk)); campBox.appendChild(h('div', { class: 'row mt' }, mkd));
+        campBox.appendChild(h('div', { class: 'row' }, mk));
         camps.forEach(function (c) {
           var live = c.active && c.approved;
           var subj = h('input', { type: 'text', maxlength: '120', 'aria-label': 'Subject', dir: 'auto', disabled: 'disabled' });
           var body = h('textarea', { rows: '16', maxlength: '3000', 'aria-label': 'Text', dir: 'auto', class: 'ta', disabled: 'disabled' });
-          var designed = false, title = h('span', { class: 'row' }, h('strong', { text: c.name }), ' ');
-          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, title, h('span', { class: 'chip ' + (live ? 'chip-ok' : 'chip-warn'), text: live ? 'approved, active' : 'not approved' })),
+          var item = h('div', { class: 'item' }, h('div', { class: 'row between' }, h('strong', { text: c.name }), h('span', { class: 'chip ' + (live ? 'chip-ok' : 'chip-warn'), text: live ? 'approved, active' : 'not approved' })),
             h('label', { text: 'Subject' }), subj, h('label', { text: 'Text (keep {name}, {listingUrl}, {senderName} and {unsubscribeUrl} exactly as written)' }), body,
             h('p', { class: 'small muted', text: '\uD83D\uDCBE save as new text   \u2714 approve   \uD83D\uDDD1 delete   \u23F9 stop.  A footer with the postal address and unsubscribe link is added to every e-mail. Changing the text makes a NEW copy that you approve separately. An approved text cannot be edited; stop it first.' }));
-          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s0 = t.campaign.steps[0]; designed = !!s0.html; if (designed) title.appendChild(h('span', { class: 'chip chip-blue', text: 'designed e-mail' })); subj.value = s0.subject; body.value = s0.body; if (!live) { subj.disabled = false; body.disabled = false; } }).catch(function (e) { body.value = e.message; });
+          outreach({ action: 'campaignText', id: c.id }).then(function (t) { var s0 = t.campaign.steps[0]; subj.value = s0.subject; body.value = s0.body; if (!live) { subj.disabled = false; body.disabled = false; } }).catch(function (e) { body.value = e.message; });
           var row = h('div', { class: 'row mt' });
           if (!live) {
             var sv = h('button', { class: 'btn btn-light btn-sm btn-icon', type: 'button', text: '\uD83D\uDCBE', title: 'Save my changes as a new text', 'aria-label': 'Save my changes as a new text' });
-            sv.addEventListener('click', function (ev) { if (!ev.isTrusted) return; sv.disabled = true; outreach({ action: 'saveText', subject: subj.value, body: body.value, designed: designed }).then(function () { say('Saved as a new text below. Read it, then approve it.'); return loadCamps(); }).catch(function (e) { say('Not saved: ' + e.message); sv.disabled = false; }); });
+            sv.addEventListener('click', function (ev) { if (!ev.isTrusted) return; sv.disabled = true; outreach({ action: 'saveText', subject: subj.value, body: body.value }).then(function () { say('Saved as a new text below. Read it, then approve it.'); return loadCamps(); }).catch(function (e) { say('Not saved: ' + e.message); sv.disabled = false; }); });
             var a = h('button', { class: 'btn btn-ok btn-sm btn-icon', type: 'button', text: '\u2714', title: 'Approve this text', 'aria-label': 'Approve this text' }); a.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Approve exactly this saved text for sending? (If you changed the boxes, save them first.) Nothing is sent until you also switch the engine ON at the top of this page.', label: 'Yes, approve', run: function () { return outreach({ action: 'approveCampaign', id: c.id }).then(loadCamps); } }); });
             var d = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\uD83D\uDDD1', title: 'Delete this text', 'aria-label': 'Delete this text' }); d.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Delete this unapproved text?', label: 'Yes, delete', danger: true, run: function () { return outreach({ action: 'deleteCampaign', id: c.id }).then(loadCamps); } }); });
             row.appendChild(sv); row.appendChild(a); row.appendChild(d);
           } else { var st = h('button', { class: 'btn btn-danger btn-sm btn-icon', type: 'button', text: '\u23F9', title: 'Stop this campaign', 'aria-label': 'Stop this campaign' }); st.addEventListener('click', function (ev) { if (!ev.isTrusted) return; confirmPanel(item, { text: 'Stop this campaign?', label: 'Yes, stop', danger: true, run: function () { return outreach({ action: 'stopCampaign', id: c.id }).then(loadCamps); } }); }); row.appendChild(st); }
-          var tTo = h('input', { type: 'email', maxlength: '254', placeholder: 'your e-mail address', 'aria-label': 'Send a test to this address', autocomplete: 'email', inputmode: 'email' });
-          var tBtn = h('button', { class: 'btn btn-light btn-sm', type: 'button', text: '\u2709 Send me a test' });
-          tBtn.addEventListener('click', function (ev) { if (!ev.isTrusted) return; var to = String(tTo.value || '').trim(); if (!to) { say('Type your own e-mail address first.'); return; }
-            confirmPanel(item, { text: 'Send ONE test e-mail of this text to ' + to + '? It goes to no one else, does not use the daily cap and does not start anything.', label: 'Yes, send the test', run: function () { return outreach({ action: 'sendTest', id: c.id, to: to }).then(function () { say('Test sent to ' + to + '. Check the inbox and the spam folder in a minute.'); }); } }); });
-          item.appendChild(h('div', { class: 'row mt' }, h('label', { text: 'Test e-mail (to yourself only)' }))); item.appendChild(h('div', { class: 'row' }, tTo, tBtn));
           item.appendChild(row); campBox.appendChild(item);
         });
       }).catch(function (e) { failure(campBox, e); });

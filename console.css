@@ -64,3 +64,7 @@ pre.small{white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:a
 textarea.ta,.item input[type=text]{width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:8px;border:1px solid var(--line);border-radius:8px}
 textarea.ta{line-height:1.6}
 .btn-icon{min-width:52px;font-size:20px;line-height:1;padding:8px 14px}
+
+textarea{width:100%;padding:12px;border:1px solid #BFC8DA;border-radius:10px;font:inherit;background:#fff;color:var(--ink)}
+textarea:focus{outline:3px solid #9DB3F5;outline-offset:1px}
+.tabs a{font-size:12.5px;padding:12px 2px}
