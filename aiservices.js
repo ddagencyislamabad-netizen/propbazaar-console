@@ -35,6 +35,31 @@
       render(); act({ action: 'status' });
     };
 
+    pages.webintel = function (el) {
+      var busy = false;
+      function draw(t, err) {
+        clear(el); el.appendChild(h('h1', { text: 'Web Intelligence: trends' }));
+        if (err) el.appendChild(h('div', { class: 'status status-warn' }, h('span', { text: err })));
+        if (!t) { if (!err) el.appendChild(h('p', { text: 'Loading...' })); return; }
+        el.appendChild(h('div', { class: 'status ' + (t.enabled ? 'status-ok' : 'status-warn') }, h('span', { text: t.enabled ? 'ON: collects headlines every night (about 2:30 am PKT)' : 'OFF: nothing is collected' })));
+        var arm = false, btn = h('button', { text: t.enabled ? 'Turn OFF' : 'Turn ON' }), run = h('button', { text: 'Run now' });
+        function go(body) { if (busy) return; busy = true; aiCall(body).then(function (j) { busy = false; draw(j.tr); }).catch(function (e) { busy = false; draw(t, e.message === 'wait-5-min' ? 'Wait 5 minutes between runs.' : 'Failed: ' + e.message); }); }
+        btn.addEventListener('click', function () { if (!t.enabled && !arm) { arm = true; btn.textContent = 'Tap again to confirm: turn ON'; return; } go({ action: 'trSwitch', enabled: !t.enabled }); });
+        run.addEventListener('click', function () { run.textContent = 'Running, about 1 minute...'; go({ action: 'trRun' }); });
+        el.appendChild(h('div', { class: 'card mt' }, btn, run, h('div', { class: 'muted', text: 'Last run: ' + (t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() + ' (' + t.lastRunResult + ')' : 'never') }),
+          h('div', { class: 'muted', text: 'Reads headlines only from Google News search feeds for 17 property topics. No personal data, no social sites, no portals are read. Run now works only when ON.' })));
+        el.appendChild(h('h2', { class: 'mt', text: 'Trending topics (this week vs last week)' }));
+        t.topics.forEach(function (x) {
+          var d = x.thisWeek - x.lastWeek, arrow = d > 0 ? ' up ' + d : d < 0 ? ' down ' + (-d) : ' flat';
+          var c = h('div', { class: 'card mt' }, h('div', { class: 'strong', text: x.label + ': ' + x.thisWeek + ' headlines (' + arrow.trim() + ')' }));
+          x.top.forEach(function (i) { c.appendChild(h('div', { class: 'muted', text: i.title + (i.publisher ? ' (' + i.publisher + ')' : '') })); });
+          el.appendChild(c);
+        });
+        if (!t.topics.some(function (x) { return x.thisWeek > 0; })) el.appendChild(h('p', { class: 'muted', text: 'No headlines yet. Turn ON, then tap Run now.' }));
+      }
+      draw(null); aiCall({ action: 'trStatus' }).then(function (j) { draw(j.tr); }).catch(function (e) { draw(null, 'Could not load: ' + e.message); });
+    };
+
     // ---------- Growth ----------
     var GK = 'pb_growth_v1';
     function gload() { try { return JSON.parse(localStorage.getItem(GK) || '{}') || {}; } catch (e) { return {}; } }

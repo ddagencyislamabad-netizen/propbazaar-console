@@ -39,12 +39,17 @@
   // big cities are searched in 4 smaller map areas (lighter for the free servers, and the 800-result cap is not hit); a city counts as answered if at least one area answers
   function tiles(b) { if ((b[2] - b[0]) * (b[3] - b[1]) <= 0.05) return [b]; var m1 = (b[0] + b[2]) / 2, m2 = (b[1] + b[3]) / 2; return [[b[0], b[1], m1, m2], [b[0], m2, m1, b[3]], [m1, b[1], b[2], m2], [m1, m2, b[2], b[3]]]; }
   // The map lookup runs in THIS browser (your phone's own connection): the public map servers refuse requests from cloud servers. Public business data only; the agencies' own sites are still read by the server, which obeys robots.txt.
+  var FKIND = { agents: true, builders: false };
   async function mapLookup(city) {
     if (!BOX[city]) throw new Error('unknown city');
     var EP = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.openstreetmap.fr/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
     var parts = tiles(BOX[city]), els = [], answered = 0, tried = [];
     for (var pi = 0; pi < parts.length; pi++) {
-      var q = '[out:json][timeout:25];nwr["office"="estate_agent"](' + parts[pi].join(',') + ');out tags 800;', j = null, why = [];
+      var bb = '(' + parts[pi].join(',') + ')', sel = [];
+      if (FKIND.agents) sel.push('nwr["office"="estate_agent"]' + bb + ';');
+      if (FKIND.builders) sel.push('nwr["office"~"^(property_management|construction_company|developer)$"]' + bb + ';', 'nwr["craft"="builder"]' + bb + ';');
+      if (!sel.length) sel.push('nwr["office"="estate_agent"]' + bb + ';');
+      var q = '[out:json][timeout:25];(' + sel.join('') + ');out tags 800;', j = null, why = [];
       // the free map servers are often busy (502/503/504/429): go round the list up to 3 times, with a short pause between rounds
       for (var round = 0; round < 3 && !j; round++) {
         if (round) await new Promise(function (r) { setTimeout(r, 5000); });
@@ -511,11 +516,16 @@
         var all = h('input', { type: 'checkbox', 'aria-label': 'All cities in ' + co[0] }), row = h('div', { class: 'row' });
         co[1].forEach(function (c) { var b = h('input', { type: 'checkbox', 'aria-label': 'City ' + c }); if (c === 'Islamabad' || c === 'Rawalpindi') b.checked = true; boxes[c] = b; row.appendChild(h('label', { class: 'small' }, b, ' ' + c + '  ')); });
         all.addEventListener('change', function () { co[1].forEach(function (c) { boxes[c].checked = all.checked; }); });
-        cityRow.appendChild(h('div', { class: 'mt' }, h('label', { class: 'small strong' }, all, ' ' + co[0] + (co[0] === 'Pakistan' ? '' : (['UAE', 'Qatar', 'Saudi Arabia', 'UK', 'USA'].indexOf(co[0]) !== -1 ? ' (Pakistanis living abroad)' : ' (agents abroad)')) + ' · select all'), row));
+        cityRow.appendChild(h('div', { class: 'mt' }, h('label', { class: 'small strong' }, all, ' ' + co[0] + (co[0] === 'Pakistan' ? '' : (['UAE', 'Qatar', 'Saudi Arabia', 'UK', 'USA'].indexOf(co[0]) !== -1 ? ' (local agents and Pakistani-run offices)' : ' (local agents abroad)')) + ' · select all'), row));
       });
       var go = h('button', { class: 'btn btn-ok', type: 'button', text: '🔎 Find agents', 'aria-label': 'Find agents' }), halt = h('button', { class: 'btn btn-light', type: 'button', text: '⏹ Stop', 'aria-label': 'Stop searching', hidden: 'hidden' });
       var prog = h('p', { class: 'small muted' }), list = h('div'), outcome = h('div');
       findBox.appendChild(h('p', { class: 'small', text: 'Looks up real-estate agencies in the cities you tick from public map listings, then reads each agency\'s own website for the business e-mail it publishes. It obeys each site\'s robots.txt, reads at most 3 pages per site and never signs in anywhere. Nothing is saved or sent here: you review the list, untick anything you do not want, and only then import it.' }));
+      var kA = h('input', { type: 'checkbox', 'aria-label': 'Find real estate agents' }), kB = h('input', { type: 'checkbox', 'aria-label': 'Find builders and developers' }); kA.checked = true;
+      kA.addEventListener('change', function () { FKIND.agents = kA.checked; if (!kA.checked && !kB.checked) { kA.checked = true; FKIND.agents = true; } });
+      kB.addEventListener('change', function () { FKIND.builders = kB.checked; if (!kA.checked && !kB.checked) { kA.checked = true; FKIND.agents = true; } });
+      findBox.appendChild(h('div', { class: 'row mt' }, h('label', { class: 'small strong' }, kA, ' Real estate agents / realtors  '), h('label', { class: 'small strong' }, kB, ' Builders, developers, property managers')));
+      findBox.appendChild(h('p', { class: 'small muted', text: 'The search finds the local agents and builders of each country you tick, not only Pakistanis. Map coverage for builders is thinner than for agents, so expect fewer results.' }));
       findBox.appendChild(cityRow); findBox.appendChild(h('div', { class: 'row mt' }, go, halt)); findBox.appendChild(prog); findBox.appendChild(list); findBox.appendChild(outcome);
       function add(r, city) { (r.found || []).forEach(function (f) { var em = String(f.email || '').toLowerCase(); if (!em || found.has(em)) return; found.set(em, { email: em, name: r.name || '', city: r.city || city, source: f.source || '', own: !!f.own }); }); }
       function render() {

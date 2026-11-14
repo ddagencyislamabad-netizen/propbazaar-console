@@ -42,6 +42,7 @@ input:focus,select:focus,button:focus-visible,a:focus-visible{outline:3px solid 
 .tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--navy);border-top:1px solid #22385C}
 .tabs a{flex:1;text-align:center;padding:12px 4px;color:#B8C4DC;text-decoration:none;font-weight:600;font-size:14px}
 .tabs a.on{color:#fff;box-shadow:inset 0 3px 0 var(--gold)}
+.tabs{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabs a{flex:0 0 auto;padding-left:14px;padding-right:14px;white-space:nowrap}
 @media(min-width:860px){.tabs{position:static;max-width:860px;margin:0 auto;border-radius:12px;margin-bottom:16px;order:-1}body{padding-bottom:0}}
 .counts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .err{color:var(--bad);font-weight:600;margin:8px 0}
@@ -68,3 +69,5 @@ textarea.ta{line-height:1.6}
 textarea{width:100%;padding:12px;border:1px solid #BFC8DA;border-radius:10px;font:inherit;background:#fff;color:var(--ink)}
 textarea:focus{outline:3px solid #9DB3F5;outline-offset:1px}
 .tabs a{font-size:12.5px;padding:12px 2px}
+
+.tabs a{flex:0 0 auto;padding:12px 14px}
