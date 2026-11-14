@@ -60,6 +60,27 @@
       draw(null); aiCall({ action: 'trStatus' }).then(function (j) { draw(j.tr); }).catch(function (e) { draw(null, 'Could not load: ' + e.message); });
     };
 
+    pages.videos = function (el) {
+      var busy = false;
+      function draw(m, err, note) {
+        clear(el); el.appendChild(h('h1', { text: 'Marketing OS videos' }));
+        if (err) el.appendChild(h('div', { class: 'status status-warn' }, h('span', { text: err })));
+        if (!m) { if (!err) el.appendChild(h('p', { text: 'Loading...' })); return; }
+        el.appendChild(h('div', { class: 'status ' + (m.enabled ? 'status-ok' : 'status-warn') }, h('span', { text: m.enabled ? 'ON: videos are made and launched at ' + m.launchTime + ' PKT, ' + m.perDay + ' per day' : 'OFF: no videos are made or launched' })));
+        var tm = h('input', { type: 'time', value: m.launchTime, 'aria-label': 'Launch time PKT' }), cnt = h('select', { 'aria-label': 'Videos per day' });
+        [1, 2, 3].forEach(function (n) { var o = h('option', { value: String(n), text: n + ' per day' }); if (n === m.perDay) o.selected = true; cnt.appendChild(o); });
+        function save(body) { if (busy) return; busy = true; body.action = 'set'; body.fn = 'videos'; aiCall(body).then(function (j) { busy = false; draw(j.mo, '', 'Saved.'); }).catch(function (e) { busy = false; draw(m, 'Failed: ' + e.message); }); }
+        var arm = false, btn = h('button', { text: m.enabled ? 'Turn OFF' : 'Turn ON' });
+        btn.addEventListener('click', function () { if (!m.enabled && !arm) { arm = true; btn.textContent = 'Tap again to confirm: turn ON'; return; } save({ enabled: !m.enabled }); });
+        el.appendChild(h('div', { class: 'card mt' }, btn));
+        el.appendChild(h('div', { class: 'card mt' }, h('div', { class: 'strong', text: 'Launch time (Pakistan time)' }), tm, cnt, h('button', { text: 'Save time', onclick: function () { save({ launchTime: tm.value, perDay: Number(cnt.value) }); } }),
+          h('div', { class: 'muted', text: 'Suggested start: 7 to 10 pm. Replace it with your own best hour from TikTok Studio and YouTube Studio.' })));
+        if (note) el.appendChild(h('p', { class: 'muted', text: note }));
+        el.appendChild(h('p', { class: 'muted mt', text: 'These are the settings the video maker follows. The automatic video maker is still being connected: until it is, turning ON saves your choice but nothing is rendered or posted by itself. Every video will still come to you on Telegram for approval first.' }));
+      }
+      draw(null); aiCall({ action: 'get', fn: 'videos' }).then(function (j) { draw(j.mo); }).catch(function (e) { draw(null, 'Could not load: ' + e.message); });
+    };
+
     // ---------- Growth ----------
     var GK = 'pb_growth_v1';
     function gload() { try { return JSON.parse(localStorage.getItem(GK) || '{}') || {}; } catch (e) { return {}; } }

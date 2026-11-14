@@ -244,7 +244,8 @@
   if (window.PBMarketing) window.PBMarketing(pages, h, clear);
   function aiCall(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
-    return fetch('https://atuizzwyslyscrpiixem.supabase.co/functions/v1/aiservices', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.access }, body: JSON.stringify(body), cache: 'no-store', credentials: 'omit' })
+    var fn = body && body.fn === 'videos' ? 'videos' : 'aiservices', pay = Object.assign({}, body); delete pay.fn;
+    return fetch('https://atuizzwyslyscrpiixem.supabase.co/functions/v1/' + fn, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.access }, body: JSON.stringify(pay), cache: 'no-store', credentials: 'omit' })
       .then(function (r) { return r.text().then(function (t) {
         var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
         if (r.status === 401 && !retried) return refresh().then(function () { return aiCall(body, true); });
