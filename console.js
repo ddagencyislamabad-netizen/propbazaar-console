@@ -237,6 +237,17 @@
   // ---------- pages ----------
   var pages = {};
   if (window.PBMarketing) window.PBMarketing(pages, h, clear);
+  function aiCall(body, retried) {
+    if (!S) return Promise.reject(new Error('Signed out'));
+    return fetch('https://atuizzwyslyscrpiixem.supabase.co/functions/v1/aiservices', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.access }, body: JSON.stringify(body), cache: 'no-store', credentials: 'omit' })
+      .then(function (r) { return r.text().then(function (t) {
+        var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
+        if (r.status === 401 && !retried) return refresh().then(function () { return aiCall(body, true); });
+        if (!r.ok || !j || j.ok === false) { var e = new Error((j && j.error) ? j.error : ('HTTP ' + r.status)); e.code = j && j.error; e.secretName = j && j.secretName; throw e; }
+        return j;
+      }); });
+  }
+  if (window.PBAI) window.PBAI(pages, h, clear, aiCall);
 
   pages.audit = function (el) {
     var verifyBox = h('div', { class: 'card' }), listBox = h('div'), more = h('button', { class: 'btn btn-light', type: 'button', text: 'Load older' });
