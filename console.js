@@ -44,23 +44,27 @@
     if (!BOX[city]) throw new Error('unknown city');
     var EP = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.openstreetmap.fr/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
     var parts = tiles(BOX[city]), els = [], answered = 0, tried = [];
-    for (var pi = 0; pi < parts.length; pi++) {
+    async function doTile(pi) {
       var bb = '(' + parts[pi].join(',') + ')', sel = [];
       if (FKIND.agents) sel.push('nwr["office"="estate_agent"]' + bb + ';');
       if (FKIND.builders) sel.push('nwr["office"~"^(property_management|construction_company|developer)$"]' + bb + ';', 'nwr["craft"="builder"]' + bb + ';');
       if (!sel.length) sel.push('nwr["office"="estate_agent"]' + bb + ';');
       var q = '[out:json][timeout:25];(' + sel.join('') + ');out tags 800;', j = null, why = [];
-      // the free map servers are often busy (502/503/504/429): go round the list up to 3 times, with a short pause between rounds
-      for (var round = 0; round < 3 && !j; round++) {
-        if (round) await new Promise(function (r) { setTimeout(r, 5000); });
+      // the free map servers are often busy (502/503/504/429): go round the list twice, short timeout per server, short pause between rounds
+      for (var round = 0; round < 2 && !j; round++) {
+        if (round) await new Promise(function (r) { setTimeout(r, 4000); });
         for (var i = 0; i < EP.length && !j; i++) {
-          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 20000);
-          try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 2) why.push(host + ': HTTP ' + r.status); }
-          catch (e) { if (round === 2) why.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
+          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 12000);
+          try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 1) why.push(host + ': HTTP ' + r.status); }
+          catch (e) { if (round === 1) why.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
         }
       }
-      if (j) { answered++; els = els.concat(j.elements || []); } else if (!tried.length) tried = why;
+      return { j: j, why: why };
     }
+    var results = new Array(parts.length), next = 0;
+    async function worker() { while (next < parts.length) { var k = next++; results[k] = await doTile(k); } }
+    await Promise.all([worker(), worker()]);   // two map areas at a time: faster, still polite to the free servers
+    results.forEach(function (rs) { if (rs.j) { answered++; els = els.concat(rs.j.elements || []); } else if (!tried.length) tried = rs.why; });
     if (!answered) throw new Error(tried.join('; '));
     var seen = {}, out = [];
     els.forEach(function (el) {
@@ -561,7 +565,10 @@
         var where = h('input', { type: 'text', placeholder: 'Place, e.g. Dubai, Doha, London, Lahore', 'aria-label': 'Place to search', maxlength: '60' });
         box.appendChild(where);
         var links = h('div', { class: 'row mt' });
-        function mk(label, fn) { var a = h('a', { class: 'btn btn-light btn-sm', target: '_blank', rel: 'noopener noreferrer', text: label }); a.addEventListener('click', function (ev) { var w = where.value.trim(); if (!w) { ev.preventDefault(); prog.textContent = 'Type a place first.'; return; } a.href = fn(encodeURIComponent(w)); }); links.appendChild(a); }
+        var linkMsg = h('p', { class: 'small err', text: 'Type a place above first (for example Dubai), then tap a button.' }), anchors = [];
+        function setLinks() { var w = where.value.trim(); linkMsg.hidden = !!w; anchors.forEach(function (x) { if (w) { x.a.href = x.fn(encodeURIComponent(w)); x.a.removeAttribute('aria-disabled'); x.a.style.opacity = ''; } else { x.a.removeAttribute('href'); x.a.setAttribute('aria-disabled', 'true'); x.a.style.opacity = '0.5'; } }); }
+        function mk(label, fn) { var a = h('a', { class: 'btn btn-light btn-sm', target: '_blank', rel: 'noopener noreferrer', text: label, role: 'link' }); a.addEventListener('click', function (ev) { if (!where.value.trim()) { ev.preventDefault(); where.focus(); } }); anchors.push({ a: a, fn: fn }); links.appendChild(a); }
+        where.addEventListener('input', setLinks);
         mk('Google: agencies', function (w) { return 'https://www.google.com/search?q=' + w + '+real+estate+agents+contact+email'; });
         mk('Google: Pakistani agents', function (w) { return 'https://www.google.com/search?q=pakistani+property+agents+' + w + '+email'; });
         mk('Facebook', function (w) { return 'https://www.facebook.com/search/pages/?q=real%20estate%20agent%20' + w; });
@@ -569,7 +576,7 @@
         mk('LinkedIn', function (w) { return 'https://www.linkedin.com/search/results/companies/?keywords=real%20estate%20agency%20' + w; });
         mk('TikTok', function (w) { return 'https://www.tiktok.com/search?q=real%20estate%20' + w; });
         mk('YouTube', function (w) { return 'https://www.youtube.com/results?search_query=real+estate+agent+' + w; });
-        box.appendChild(links);
+        setLinks(); box.appendChild(links); box.appendChild(linkMsg);
         var ta = h('textarea', { rows: '5', placeholder: 'Paste website addresses and/or e-mails, one per line or mixed with text', 'aria-label': 'Websites and e-mails' }), btn = h('button', { class: 'btn btn-ok btn-sm', type: 'button', text: 'Read these and add to list' }), msg = h('p', { class: 'small' });
         box.appendChild(h('label', { text: 'Paste here' })); box.appendChild(ta); box.appendChild(h('div', { class: 'row mt' }, btn)); box.appendChild(msg);
         btn.addEventListener('click', function (ev) {
