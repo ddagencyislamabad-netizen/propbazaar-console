@@ -39,22 +39,22 @@
   // big cities are searched in 4 smaller map areas (lighter for the free servers, and the 800-result cap is not hit); a city counts as answered if at least one area answers
   function tiles(b) { if ((b[2] - b[0]) * (b[3] - b[1]) <= 0.05) return [b]; var m1 = (b[0] + b[2]) / 2, m2 = (b[1] + b[3]) / 2; return [[b[0], b[1], m1, m2], [b[0], m2, m1, b[3]], [m1, b[1], b[2], m2], [m1, m2, b[2], b[3]]]; }
   // The map lookup runs in THIS browser (your phone's own connection): the public map servers refuse requests from cloud servers. Public business data only; the agencies' own sites are still read by the server, which obeys robots.txt.
-  var FKIND = { agents: true, builders: false };
+  var FKIND = { agents: true, builders: false }, FSTATUS = function () {};
   async function mapLookup(city) {
     if (!BOX[city]) throw new Error('unknown city');
     var EP = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.openstreetmap.fr/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
     var parts = tiles(BOX[city]), els = [], answered = 0, tried = [];
     async function doTile(pi) {
       var bb = '(' + parts[pi].join(',') + ')', sel = [];
-      if (FKIND.agents) sel.push('nwr["office"="estate_agent"]' + bb + ';');
-      if (FKIND.builders) sel.push('nwr["office"~"^(property_management|construction_company|developer)$"]' + bb + ';', 'nwr["craft"="builder"]' + bb + ';');
-      if (!sel.length) sel.push('nwr["office"="estate_agent"]' + bb + ';');
+      var HAS = '[~"^(website|contact:website|url|email|contact:email)$"~"."]';   // only places that publish a website or e-mail: that is all we can use, and it makes the answer much smaller and faster
+      if (FKIND.agents || !FKIND.builders) sel.push('nwr["office"="estate_agent"]' + HAS + bb + ';');
+      if (FKIND.builders) sel.push('nwr["office"~"^(property_management|construction_company|developer)$"]' + HAS + bb + ';', 'nwr["craft"="builder"]' + HAS + bb + ';');
       var q = '[out:json][timeout:25];(' + sel.join('') + ');out tags 800;', j = null, why = [];
       // the free map servers are often busy (502/503/504/429): go round the list twice, short timeout per server, short pause between rounds
       for (var round = 0; round < 2 && !j; round++) {
         if (round) await new Promise(function (r) { setTimeout(r, 4000); });
         for (var i = 0; i < EP.length && !j; i++) {
-          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 12000);
+          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 15000); FSTATUS(city + ': map area ' + (pi + 1) + ' of ' + parts.length + ', asking ' + host + (round ? ' (second try)' : '') + '...');
           try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 1) why.push(host + ': HTTP ' + r.status); }
           catch (e) { if (round === 1) why.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
         }
@@ -525,6 +525,7 @@
       });
       var go = h('button', { class: 'btn btn-ok', type: 'button', text: '🔎 Find agents', 'aria-label': 'Find agents' }), halt = h('button', { class: 'btn btn-light', type: 'button', text: '⏹ Stop', 'aria-label': 'Stop searching', hidden: 'hidden' });
       var prog = h('p', { class: 'small muted' }), list = h('div'), outcome = h('div');
+      FSTATUS = function (t) { if (running) prog.textContent = t; };
       findBox.appendChild(h('p', { class: 'small', text: 'Looks up real-estate agencies in the cities you tick from public map listings, then reads each agency\'s own website for the business e-mail it publishes. It obeys each site\'s robots.txt, reads at most 3 pages per site and never signs in anywhere. Nothing is saved or sent here: you review the list, untick anything you do not want, and only then import it.' }));
       var kA = h('input', { type: 'checkbox', 'aria-label': 'Find real estate agents' }), kB = h('input', { type: 'checkbox', 'aria-label': 'Find builders and developers' }); kA.checked = true;
       kA.addEventListener('change', function () { FKIND.agents = kA.checked; if (!kA.checked && !kB.checked) { kA.checked = true; FKIND.agents = true; } });
