@@ -46,24 +46,22 @@
     var parts = tiles(BOX[city]), els = [], answered = 0, tried = [];
     async function doTile(pi) {
       var bb = '(' + parts[pi].join(',') + ')', sel = [];
-      var HAS = '[~"^(website|contact:website|url|email|contact:email)$"~"."]';   // only places that publish a website or e-mail: that is all we can use, and it makes the answer much smaller and faster
-      if (FKIND.agents || !FKIND.builders) sel.push('nwr["office"="estate_agent"]' + HAS + bb + ';');
-      if (FKIND.builders) sel.push('nwr["office"~"^(property_management|construction_company|developer)$"]' + HAS + bb + ';', 'nwr["craft"="builder"]' + HAS + bb + ';');
-      var q = '[out:json][timeout:25];(' + sel.join('') + ');out tags 800;', j = null, why = [];
+      if (FKIND.builders) { sel.push('nwr["office"="estate_agent"]' + bb + ';', 'nwr["office"~"^(property_management|construction_company|developer)$"]' + bb + ';', 'nwr["craft"="builder"]' + bb + ';'); }
+      var q = FKIND.builders ? '[out:json][timeout:25];(' + sel.join('') + ');out tags 800;' : '[out:json][timeout:25];nwr["office"="estate_agent"]' + bb + ';out tags 800;', j = null, why = [];   // agents only: the exact query that worked before
       // the free map servers are often busy (502/503/504/429): go round the list twice, short timeout per server, short pause between rounds
-      for (var round = 0; round < 2 && !j; round++) {
-        if (round) await new Promise(function (r) { setTimeout(r, 4000); });
+      for (var round = 0; round < 3 && !j; round++) {
+        if (round) await new Promise(function (r) { setTimeout(r, 5000); });
         for (var i = 0; i < EP.length && !j; i++) {
-          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 15000); FSTATUS(city + ': map area ' + (pi + 1) + ' of ' + parts.length + ', asking ' + host + (round ? ' (second try)' : '') + '...');
-          try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 1) why.push(host + ': HTTP ' + r.status); }
-          catch (e) { if (round === 1) why.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
+          var host = EP[i].split('/')[2], ctl = new AbortController(), tm = setTimeout(function () { ctl.abort(); }, 20000); FSTATUS(city + ': map area ' + (pi + 1) + ' of ' + parts.length + ', asking ' + host + (round ? ' (second try)' : '') + '...');
+          try { var r = await fetch(EP[i] + '?data=' + encodeURIComponent(q), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' }); if (r.ok) j = await r.json(); else if (round === 2) why.push(host + ': HTTP ' + r.status); }
+          catch (e) { if (round === 2) why.push(host + ': ' + (e && e.name === 'AbortError' ? 'timed out' : 'blocked or offline')); } finally { clearTimeout(tm); }
         }
       }
       return { j: j, why: why };
     }
     var results = new Array(parts.length), next = 0;
     async function worker() { while (next < parts.length) { var k = next++; results[k] = await doTile(k); } }
-    await Promise.all([worker(), worker()]);   // two map areas at a time: faster, still polite to the free servers
+    await worker();   // one map area at a time: the free servers allow very few simultaneous requests
     results.forEach(function (rs) { if (rs.j) { answered++; els = els.concat(rs.j.elements || []); } else if (!tried.length) tried = rs.why; });
     if (!answered) throw new Error(tried.join('; '));
     var seen = {}, out = [];
