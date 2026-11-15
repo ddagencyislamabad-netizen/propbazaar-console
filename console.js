@@ -75,6 +75,13 @@
     });
     return { agencies: out, total: els.length, areas: parts.length, answered: answered };
   }
+  // Web search by city name (Brave Search API, server side, needs the owner switch ON in the AI tab). If it is OFF, has no key or is out of budget, the finder falls back to the map lookup above.
+  var WEBSTOP = '';   // reason the web search cannot be used right now (set once per run)
+  async function webLookup(city) {
+    var r = await aiCall({ fn: 'webfind', city: city, country: countryOf(city) === city ? '' : countryOf(city), kind: FKIND.builders ? 'builders' : 'agents' });
+    var ag = (r.agencies || []).map(function (x) { return { name: String(x.name || '').slice(0, 80), website: String(x.website || '').slice(0, 300), email: '', city: city }; });
+    return { agencies: ag, total: ag.length, areas: 1, answered: 1, searches: r.searches || 0, note: r.note || '' };
+  }
   var OUT = ['status','switch','setCap', 'importPreview', 'importCommit', 'exportLeads', 'findAgencies', 'findCrawl', 'importBatches', 'importUndo', 'createIntro', 'approveCampaign', 'stopCampaign', 'campaignText', 'saveText', 'deleteCampaign'];
   function outreach(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
@@ -247,7 +254,7 @@
   if (window.PBMarketing) window.PBMarketing(pages, h, clear);
   function aiCall(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
-    var fn = body && (body.fn === 'videos' || body.fn === 'agents') ? body.fn : 'aiservices', pay = Object.assign({}, body); delete pay.fn;
+    var fn = body && (body.fn === 'videos' || body.fn === 'agents' || body.fn === 'webfind') ? body.fn : 'aiservices', pay = Object.assign({}, body); delete pay.fn;
     return fetch('https://atuizzwyslyscrpiixem.supabase.co/functions/v1/' + fn, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.access }, body: JSON.stringify(pay), cache: 'no-store', credentials: 'omit' })
       .then(function (r) { return r.text().then(function (t) {
         var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
@@ -595,11 +602,13 @@
       })();
       go.addEventListener('click', function (ev) {
         if (!ev.isTrusted || running) return; var cities = CITY_LIST.filter(function (c) { return boxes[c].checked; }); if (!cities.length) { prog.textContent = 'Tick at least one city.'; return; }
-        running = true; stop = false; go.disabled = true; halt.hidden = false; found.clear(); picks.clear(); clear(list); clear(outcome); var notes = [];
+        running = true; stop = false; go.disabled = true; halt.hidden = false; found.clear(); found._notedWeb = 0; WEBSTOP = ''; picks.clear(); clear(list); clear(outcome); var notes = [];
         (async function () {
           for (var ci = 0; ci < cities.length && !stop; ci++) {
             var city = cities[ci], agencies; prog.textContent = city + ': looking up agencies…';
-            var before = found.size; try { var la = await mapLookup(city); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + ' agencies on the map, ' + agencies.length + ' with a website or e-mail' + (la.answered < la.areas ? ' (only ' + la.answered + ' of ' + la.areas + ' map areas answered: run this city again later for the rest)' : '')); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
+            var before = found.size, viaWeb = false, la = null;
+            if (!WEBSTOP) { try { la = await webLookup(city); viaWeb = true; } catch (we) { var wc = we && we.code; if (wc === 'no-key' || wc === 'off' || wc === 'cap-reached') { WEBSTOP = wc === 'no-key' ? 'no key added yet' : wc === 'off' ? 'switched OFF in the AI tab' : 'monthly cap reached'; } else if (wc === 'key-rejected') { WEBSTOP = 'the search provider rejected the key'; } else { outcome.appendChild(h('p', { class: 'err', text: city + ': web search failed (' + (we && we.message) + '), trying the map instead.' })); } if (WEBSTOP && !found._notedWeb) { found._notedWeb = 1; outcome.appendChild(h('p', { class: 'small muted', text: 'Web search by city name is not used (' + WEBSTOP + '), so the free map lookup is used instead. Turn it on in the AI tab, Web search.' })); } } }
+            try { if (!viaWeb) la = await mapLookup(city); agencies = la.agencies || []; notes.push(city + ': ' + (la.total || 0) + (viaWeb ? ' websites found by web search (' + la.searches + ' searches), ' : ' agencies on the map, ') + agencies.length + ' with a website or e-mail' + (la.answered < la.areas ? ' (only ' + la.answered + ' of ' + la.areas + ' map areas answered: run this city again later for the rest)' : '')); } catch (e) { outcome.appendChild(h('p', { class: 'err', text: city + ': the public map source did not answer (' + e.message + '). Try again in a few minutes.' })); continue; }
             for (var i = 0; i < agencies.length && !stop; i += 6) {
               prog.textContent = city + ': read ' + Math.min(i, agencies.length) + ' of ' + agencies.length + ' agencies · ' + found.size + ' addresses found so far';
               try { var r = await outreach({ action: 'findCrawl', sites: agencies.slice(i, i + 6) }); (r.results || []).forEach(function (x) { add(x, city); }); } catch (e) { /* skip this group, carry on */ }

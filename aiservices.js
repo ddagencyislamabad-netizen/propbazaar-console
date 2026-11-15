@@ -3,7 +3,7 @@
 (function () {
   'use strict';
   window.PBAI = function (pages, h, clear, aiCall, liveRpc) {
-    var CAT = { video: 'AI video (cheapest first)', writing: 'AI writing', voice: 'AI voice-over', image: 'AI images' };
+    var CAT = { video: 'AI video (cheapest first)', writing: 'AI writing', voice: 'AI voice-over', image: 'AI images', search: 'Web search (outreach finder)' };
     pages.ai = function (el) {
       var msg = '', busy = false, rows = null;
       function act(body) { if (busy) return; busy = true; aiCall(body).then(function (j) { rows = j.services; msg = ''; }).catch(function (e) {
