@@ -10,7 +10,7 @@
   if (window.top !== window.self) { app.textContent = 'This page cannot be shown inside another page.'; return; }
 
   // ---------- allow-list: the console can ONLY make these calls ----------
-  var RPC = ['cc_console_verify', 'cc_console_audit', 'cc_console_anchors', 'cc_console_stop',
+  var RPC = ['cc_console_followup_counts', 'cc_console_verify', 'cc_console_audit', 'cc_console_anchors', 'cc_console_stop',
              'cc_console_inbox', 'cc_console_inbox_counts', 'cc_console_export', 'cc_console_approvals', 'cc_console_collectors', 'cc_console_integrations', 'cc_console_automations'];
   var WRITE = ['cc_console_decide', 'cc_console_notification_set', 'cc_console_stop_engage', 'cc_console_stop_release', 'cc_console_integration_request', 'cc_console_automation_request', 'cc_console_integration_set', 'cc_console_automation_set'];
   var AUTH = [
@@ -246,7 +246,7 @@
   if (window.PBMarketing) window.PBMarketing(pages, h, clear);
   function aiCall(body, retried) {
     if (!S) return Promise.reject(new Error('Signed out'));
-    var fn = body && body.fn === 'videos' ? 'videos' : 'aiservices', pay = Object.assign({}, body); delete pay.fn;
+    var fn = body && (body.fn === 'videos' || body.fn === 'agents') ? body.fn : 'aiservices', pay = Object.assign({}, body); delete pay.fn;
     return fetch('https://atuizzwyslyscrpiixem.supabase.co/functions/v1/' + fn, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.access }, body: JSON.stringify(pay), cache: 'no-store', credentials: 'omit' })
       .then(function (r) { return r.text().then(function (t) {
         var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
@@ -255,7 +255,7 @@
         return j;
       }); });
   }
-  if (window.PBAI) window.PBAI(pages, h, clear, aiCall);
+  if (window.PBAI) window.PBAI(pages, h, clear, aiCall, rpc);
 
   pages.audit = function (el) {
     var verifyBox = h('div', { class: 'card' }), listBox = h('div'), more = h('button', { class: 'btn btn-light', type: 'button', text: 'Load older' });

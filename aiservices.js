@@ -2,7 +2,7 @@
    AI switches and caps are enforced on the server (aiservices function + ai_reserve). Nothing here can spend money by itself. */
 (function () {
   'use strict';
-  window.PBAI = function (pages, h, clear, aiCall) {
+  window.PBAI = function (pages, h, clear, aiCall, liveRpc) {
     var CAT = { video: 'AI video (cheapest first)', writing: 'AI writing', voice: 'AI voice-over', image: 'AI images' };
     pages.ai = function (el) {
       var msg = '', busy = false, rows = null;
@@ -79,6 +79,36 @@
         el.appendChild(h('p', { class: 'muted mt', text: 'These are the settings the video maker follows. The automatic video maker is still being connected: until it is, turning ON saves your choice but nothing is rendered or posted by itself. Every video will still come to you on Telegram for approval first.' }));
       }
       draw(null); aiCall({ action: 'get', fn: 'videos' }).then(function (j) { draw(j.mo); }).catch(function (e) { draw(null, 'Could not load: ' + e.message); });
+    };
+
+    pages.agents = function (el) {
+      var busy = false, lead = null;
+      function go(body, ag) { if (busy) return; busy = true; body.fn = 'agents'; aiCall(body).then(function (j) { busy = false; draw(j.ag); }).catch(function (e) { busy = false; draw(ag, e.message === 'turn-on-first' ? 'Turn it ON first.' : e.message === 'wait-1-min' ? 'Wait a minute between runs.' : 'Failed: ' + e.message); }); }
+      function sw(a, ag) { var arm = false, b = h('button', { text: a.enabled ? 'Turn OFF' : 'Turn ON' }); b.addEventListener('click', function () { if (!a.enabled && !arm) { arm = true; b.textContent = 'Tap again to confirm'; return; } go({ action: 'switch', key: a.key, enabled: !a.enabled }, ag); }); return b; }
+      function draw(ag, err) {
+        clear(el); el.appendChild(h('h1', { text: 'Agents' }));
+        if (err) el.appendChild(h('div', { class: 'status status-warn' }, h('span', { text: err })));
+        el.appendChild(h('p', { class: 'muted', text: 'Each agent has its own switch and is OFF until you turn it ON. They read listings and report to you. They never post, message or change anything by themselves.' }));
+        // status of the others
+        el.appendChild(h('h2', { class: 'mt', text: 'All agents' }));
+        [['Trends', 'Collects property headlines nightly. Switch: Web Intel tab.'], ['Video maker', 'Switch and launch time: Videos tab. The server that renders is not rented yet.'], ['Social poster', 'Posts listings. Working for TikTok and YouTube; Meta is blocked.'], ['Outreach', 'Finds agents and sends introductions. Switch: Outreach tab.'], ['Monitor', 'Site uptime and alerts. Working.']].forEach(function (x) { el.appendChild(h('div', { class: 'card mt' }, h('div', { class: 'strong', text: x[0] }), h('div', { class: 'muted', text: x[1] }))); });
+        // lead follow-up (live data, counts only)
+        var lc = h('div', { class: 'card mt' }, h('div', { class: 'strong', text: 'Lead follow-up' }));
+        if (lead && lead.err) lc.appendChild(h('div', { class: 'muted', text: 'Could not load: ' + lead.err }));
+        else if (!lead) lc.appendChild(h('div', { class: 'muted', text: 'Loading...' }));
+        else { lc.appendChild(h('div', { text: 'Unread enquiries: ' + lead.total_unread + '. Over 24 hours: ' + lead.unread_over_24h + '. Over 72 hours: ' + lead.unread_over_72h + '.' })); lc.appendChild(h('div', { class: 'muted', text: lead.total_unread > 0 ? 'Oldest unread enquiry waited ' + lead.oldest_unread_hours + ' hours. Open your leads to reply. Counts only: no buyer details shown here.' : 'Nothing waiting.' })); }
+        el.appendChild(h('h2', { class: 'mt', text: 'Agents with switches' })); el.appendChild(lc);
+        if (!ag) { el.appendChild(h('p', { text: 'Loading...' })); return; }
+        ag.agents.forEach(function (a) {
+          var c = h('div', { class: 'card mt' }, h('div', { class: 'strong', text: a.label + ': ' + (a.enabled ? 'ON' : 'OFF') }), h('div', { class: 'muted', text: 'Last run: ' + (a.lastRunAt ? new Date(a.lastRunAt).toLocaleString() + ' (' + a.lastResult + ')' : 'never') + '. Runs by itself every night at 3 am PKT when ON.' }));
+          c.appendChild(h('div', { class: 'mt' }, sw(a, ag), h('button', { text: 'Run now', onclick: function () { go({ action: 'runNow', key: a.key }, ag); } })));
+          if (a.key === 'listing_quality') { var f = ag.findings.filter(function (x) { return true; }); if (!f.length) c.appendChild(h('div', { class: 'muted', text: 'No findings yet.' })); f.forEach(function (x) { c.appendChild(h('div', { class: x.severity === 'warn' ? 'err small' : 'muted small', text: (x.severity === 'warn' ? 'Fix: ' : 'Check: ') + x.note })); }); }
+          if (a.key === 'seo_drafts') { if (!ag.drafts.length) c.appendChild(h('div', { class: 'muted', text: 'No drafts yet. A draft needs at least 3 similar listings in a city.' })); ag.drafts.forEach(function (d) { var body = h('pre', { class: 'small', text: d.body, hidden: 'hidden', style: 'white-space:pre-wrap' }); c.appendChild(h('div', { class: 'mt' }, h('button', { text: d.title, onclick: function () { body.hidden = !body.hidden; } }), body)); }); }
+          el.appendChild(c);
+        });
+      }
+      draw(null);
+      liveRpc('cc_console_followup_counts').then(function (r) { lead = (r && r[0]) || (r && r.total_unread !== undefined ? r : { total_unread: 0, unread_over_24h: 0, unread_over_72h: 0, oldest_unread_hours: 0 }); }).catch(function (e) { lead = { err: e.message }; }).then(function () { aiCall({ action: 'status', fn: 'agents' }).then(function (j) { draw(j.ag); }).catch(function (e) { draw(null, 'Could not load: ' + e.message); }); });
     };
 
     // ---------- Growth ----------
